@@ -1,0 +1,124 @@
+---
+title: "IDC-TCGA-Datadownload"
+author: "Kevin Cissie"
+date: "2024-08-26"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r}
+#Setting the working directories
+getwd()
+setwd("D:/IDC_MAGE/IDC_TCGA_Datadownload")
+```
+
+
+```{r}
+#Loading libraries
+library(TCGAbiolinks) # downloading GDC data
+library(tidyverse)#packages for data manipulation, filtering and plotting
+library(pheatmap) # For drawing heatmaps
+#library(maftools) #visualizes and analyzes mutation data
+library(SummarizedExperiment)# stores downloaded data in a data frame alongside its meta-data
+library(dplyr)
+library(DT)
+library(readxl) #For loading the excel manifest file
+```
+
+```{r}
+# Starting the download of TCGA GDC data
+# Get a list of projects
+gdcprojects <- getGDCprojects()
+getProjectSummary("TCGA-BRCA") #This returns the various data categories contained in the TCGA database. We're interested in transcriptomics profiling data
+
+```
+```{r}
+#Building a query with filters
+
+Query_TCGA <- GDCquery(project = "TCGA-BRCA",
+         data.category = "Transcriptome Profiling",
+         experimental.strategy = "RNA-Seq",
+         data.type = "Gene Expression Quantification", 
+         workflow.type = "STAR - Counts",
+         data.format = "TSV",
+         access = "open")
+```
+
+```{r}
+#Query2 <- GDCquery(project = "TCGA-BRCA", data.category = "Transcriptome Profiling")
+TCGAout <- getResults(Query_TCGA)
+head(TCGAout) # This returns 1231 entries
+```
+
+```{r}
+#Selecting out cases for barcodes based on sample ids in the manifest.txt
+# Step 1: Read the Excel file containing the IDs interested in
+IDC_manifest <- read.csv("D:/IDC_MAGE/gdc_manifest.2024-08-21.txt", header = TRUE, sep = "\t")
+head(IDC_manifest) # Viewing the first lines of the IDC_manifest file downloaded from TCGA based on the specific filters (Infiltrating BC, Female, dead and alive, coupled with those specified in the GDCquery)
+```
+```{r}
+#Extracting the ids from the manifest file, these correspond to files returned for IDC samples.
+#These are needed to filter the GDCquery to obtain only samples relating to IDC. 
+# The IDs are in the first column of the Excel sheet
+IDC_manifestids<- IDC_manifest$id   # This returns 675 ids corresponding to the 657 samples
+
+#Performing a join operation to extract cases matching the interested IDs
+IDC_TCGAcases_info <- subset(TCGAout, id %in% IDC_manifestids) # Extracting cases that match our ids
+head(IDC_TCGAcases_info) #This data has the cases, cases submitter ids and samples submitter ids, sample type of the tumor
+write.csv(IDC_TCGAcases_info,"IDC_TCGAcases_info.csv", row.names = TRUE)
+```
+
+```{r}
+#Extracting the cases ids contained in column 3, These are to be used as barcodes to extract the IDC data.
+#We're going to specify these barcodes in our GDCquery.
+IDCCases_barcodes <- IDC_TCGAcases_info[,3]
+head(IDCCases_barcodes)
+#I need these barcodes in a list form
+#Formatting cases into a comma-separated string
+IDCcasesbarcodes_string <- paste(IDCCases_barcodes, collapse = ", ")
+
+#Convertting the string into a single vector to obtain a list of barcodes
+IDCCases_barcodes <- unlist(strsplit(IDCcasesbarcodes_string, ", "))
+head(IDCCases_barcodes)
+write.csv(IDCCases_barcodes, "IDCCases_barcodes.csv", row.names = TRUE)
+
+```
+
+```{r}
+# Modifying our query to return only the selected samples using barcodes
+TCGA_BRCA_IDC_Data <- GDCquery(project = "TCGA-BRCA",
+                       data.category = "Transcriptome Profiling",
+                       experimental.strategy = "RNA-Seq",
+                       data.type = "Gene Expression Quantification", 
+                       workflow.type = "STAR - Counts",
+                       data.format = "TSV",
+                       access = "open",
+                       barcode = IDCCases_barcodes)
+```
+
+```{r}
+# Downloading Query
+IDC_TCGGABRCAdata <- GDCdownload(TCGA_BRCA_IDC_Data) 
+#Preparing the downloaded data
+TCGA_Summary <- GDCprepare(TCGA_BRCA_IDC_Data, summarizedExperiment = TRUE)
+```
+
+```{r}
+# saving output from the summarized experiment
+saveRDS(TCGA_Summary, file = "TCGASummaryEXP.rds")
+
+#Retrieving counts data
+IDC_matrix <- assay(TCGA_Summary, 'unstranded') # Selecting unstranded because raw counts are needed as DEseq2 has its own normalization method 
+IDC_tpm <- assay(TCGA_Summary,'tpm_unstrand')
+
+#Saving the counts data
+write.csv(IDC_matrix, "IDC_matrix_rawcounts.csv", row.names = TRUE)
+write.csv(IDC_tpm, "IDC_tpm_counts.csv", row.names = TRUE)
+
+#obtaining a metadata file from the summarized experiment
+gene_metadata <- as.data.frame(rowData(TCGA_Summary))
+# saving the metadata
+write.csv(data.frame(gene_metadata), "gene_metadata.csv", row.names = FALSE)
+```
+
