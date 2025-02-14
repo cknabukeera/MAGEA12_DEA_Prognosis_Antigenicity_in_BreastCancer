@@ -1,0 +1,4 @@
+IDC_TCGA_Datadownload/GDCdata/TCGA-BRCA/harmonized/Transcriptome_Profiling/Gene_Expression_Quantification/* filter=lfs diff=lfs merge=lfs -text
+IDC_TCGA_Datadownload/GDCdata/ filter=lfs diff=lfs merge=lfs -text
+IDC_Gene_expression_data.tar.gz[[:space:]] filter=lfs diff=lfs merge=lfs -text
+IDC_Gene_expression_data.tar.gz.part_aa filter=lfs diff=lfs merge=lfs -text
