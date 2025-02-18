@@ -1,0 +1,141 @@
+---
+title: "PAM50 Data Download"
+author: "Kevin Cissie"
+date: "2024-08-28"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r}
+#Setting the working Directory
+setwd("D:/IDC_MAGE/PAM50 data Download_Classification")
+getwd()
+```
+```{r}
+# OBJECTIVE 1
+#PART 2 : DATA CATEGORIZATION USING PAM50
+#First we're going to download PAM50 classified data from the TCGA and use this data to categorize our IDC data
+#Since we used cases (used these as barcodes to obtain data matching the manifest file corresponding to the IDC data), We're going to use a package TCGAutils to convert these cases to barcode ids that are identifiable for the PAM50 data download package of TCGAbiolinks 
+
+```
+
+```{r}
+#Loading libraries
+#Loading libraries
+library(TCGAutils) # this package contains the TCGAcode which converts cases ids to barcodes
+library(TCGAbiolinks)
+library(readxl)
+```
+
+```{r}
+#Loading the cases barcodes from the IDC gdc_manifest file
+cases_barcodes <- read.csv("D:/IDC_MAGE/IDC_TCGA_Datadownload/IDCCases_barcodes.csv")
+head(cases_barcodes)
+```
+
+```{r}
+#Converting these barcodes into a list
+cases_barcodes <- cases_barcodes$x #Extracting these from the x column
+cases_barcodes <- c(cases_barcodes) # making these into a list
+head(cases_barcodes)
+```
+```{r}
+#Converting these cases ids into sample barcodes
+IDC_samplebarcodes <- TCGAbarcode(cases_barcodes) 
+head(IDC_samplebarcodes) # the barcodes displayed are shorter than the cases barcodes
+
+```
+
+```{r}
+#Using TCGAquery_subtype to download the PAM50 data corresponding to the BRCA project
+#PAM50 classified data corresponding to the IDC barcodes
+#Obtaining TCGA samples with their categorized PAM50 subtypes
+PAM50_BRCAdata <- TCGAquery_subtype("BRCA") # Downloads pam50 subtypes of BRCA  Tumor
+head(PAM50_BRCAdata) # Column 11 contains the BRCA-subtypes classified using PAM50
+# Saving out the PAM50 subtypes file
+write.csv(PAM50_BRCAdata, "PAM50_BRCAdata.csv")
+```
+
+```{r}
+library(dplyr)
+# Filter the data frame
+PAM50_IDCdata <- PAM50_BRCAdata %>%
+  filter(patient %in% IDC_samplebarcodes)
+head(PAM50_IDCdata)
+total_rows <- nrow(PAM50_IDCdata)
+total_rows   #This returns 595 entries(samples) which corresponds to the number of unique samples 
+
+```
+
+```{r}
+#Counting occurences of each BRCA-subtype
+
+BRCAsubtype_counts <- as.data.frame(table(PAM50_IDCdata$BRCA_Subtype_PAM50))
+
+# Spreading the counts into a wide format
+library(tidyr)
+BRCAsubtype_counts <- spread(BRCAsubtype_counts, Var1, Freq)
+
+# View the result
+print(BRCAsubtype_counts)
+```
+
+```{r}
+library(ggplot2)
+#converting the subtypes categorization into a long format
+BRCAsubtype_counts_long <- gather(BRCAsubtype_counts, key = "Subtype", value = "Count")
+print(BRCAsubtype_counts_long)
+
+write.csv(BRCAsubtype_counts_long, "BRCAsubtypes_countsocurrences.csv")
+
+# Plot the counts of each subtype
+plot <- ggplot(BRCAsubtype_counts_long, aes(x = Subtype, y = Count, fill = Subtype)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Occurence of Each Subtype in the unique IDC samples", x = "BRCA Subtypes of IDC samples", y = "Counts") +
+  scale_fill_brewer(palette = "Set3")
+# Save the displayed plot to a PDF file
+ggsave("BRCA_Subtype_Plot.pdf", plot = plot, width = 8, height = 6)
+# Display the plot
+print(plot)
+
+```
+
+```{r}
+#Calculating the means of counts and doing the plots
+# Calculate the mean of counts for each subtype
+mean_counts <- BRCAsubtype_counts_long %>%
+  group_by(Subtype) %>%
+  summarise(Mean_Count = mean(Count))
+
+# Plot the mean counts of each subtype
+mean_plot <- ggplot(mean_counts, aes(x = Subtype, y = Mean_Count, fill = Subtype)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Mean Occurrence of Each Subtype in IDC Samples", x = "BRCA Subtypes of IDC Samples", y = "Mean Counts") +
+  scale_fill_brewer(palette = "Set3")
+
+# Save the mean plot to a PDF file
+ggsave("BRCA_Subtype_Mean_Plot.pdf", plot = mean_plot, width = 8, height = 6)
+
+# Display the mean plot
+print(mean_plot)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
