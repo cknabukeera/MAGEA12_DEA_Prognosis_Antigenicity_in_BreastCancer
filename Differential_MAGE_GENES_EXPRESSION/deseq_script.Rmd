@@ -1,0 +1,693 @@
+---
+title: "DIFFERENTIAL GENE EXPRESSION OF IDC BRCA GENES OBTAINED FROM TRANSCRIPTOMICS PROFILING DATA ON TCGA"
+author: "KEVIN CISSY NABUKEERA"
+date: "12/4/2024"
+output: pdf_document
+geometry: "margin=1.5in"
+fontsize: "11pt"
+---
+
+```{r}
+# Load required libraries
+library(DESeq2)
+library(tidyverse)
+library(ensembldb)
+library(EnsDb.Hsapiens.v86)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(ggvenn)
+library(AnnotationDbi)
+
+
+```
+
+```{r}
+#Loading the counts data for the IDC BRCA genes
+data <- read.csv("/etc/ace-data/home/cknabukeera/R/genecount.csv")
+rownames(data) <- data$X #making the gene names rownames
+data <- data[, -1]
+head(data)
+print(nrow(data)) #printing the number of rows in the dataset
+
+```
+
+```{r}
+#Loading the metadata
+metadata <- read.csv("/etc/ace-data/home/cknabukeera/R/metadata.csv")
+rownames(metadata) <- metadata$ID
+#Removing the ID column after making it rownames
+metadata <- metadata %>% dplyr::select(-ID)
+head(metadata)
+print(nrow(metadata)) #This data contains 614 rows, corresponding to those in the counts data
+metadata$Phenotype <- as.factor(metadata$Phenotype)
+summary(metadata$Phenotype) #Printing the occurences of each subtype
+#Checking if the rownames and colnames match and exist before deseq
+all(rownames(metadata) == colnames(data))
+all(rownames(metadata) %in% colnames(data))
+
+
+```
+
+```{r}
+# Create DESeqDataSet
+dds <- DESeqDataSetFromMatrix(countData = data,
+colData = metadata,
+design = ~Phenotype)
+# Pre filtering to keep only rows that have at least 10 reads total
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+```
+
+```{r}
+# Set reference group (choosing the control group)
+dds$Phenotype <- relevel(dds$Phenotype, ref = "Normal")
+# Run deseq2
+dds <- DESeq(dds)
+```
+
+```{r}
+# Save dds
+saveRDS(dds, file="dds.RData")
+dds <- readRDS("dds.RData") # Read dds object
+# Verify the annotation
+head(rowData(dds))
+# Save the annotated dds metadata to a CSV file (optional)
+write.csv(as.data.frame(rowData(dds)), file = "./dds.csv", row.names = TRUE)
+```
+
+```{r}
+#PERFORMING ANNOTATION
+# Remove decimal part from Ensembl IDs
+rownames(dds) <- gsub("\\..*", "", rownames(dds))
+# Map Ensembl IDs to Gene Symbols
+rowData(dds)$GeneSymbol <- mapIds(
+EnsDb.Hsapiens.v86,
+keys = rownames(dds),
+column = "SYMBOL",
+keytype = "GENEID",
+multiVals = "first")
+```
+
+```{r}
+#Verify the annotation
+head(rowData(dds))
+# Save the annotated dds metadata to a CSV file (optional)
+write.csv(as.data.frame(rowData(dds)), file = "./dds_annotated.csv", row.names = TRUE)
+```
+
+
+
+
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(AnnotationDbi)
+library(EnsDb.Hsapiens.v86)
+library(pheatmap)
+library(RColorBrewer)
+# Assuming your 'dds' object is already annotated with 'GeneSymbol' in rowData
+# 1. Filter for MAGE genes
+mage_genes <- rowData(dds)$GeneSymbol %in% grep("MAGEA", rowData(dds)$GeneSymbol, value = TRUE)
+dds_mage <- dds[mage_genes, ]
+# 2. Variance Stabilizing Transformation (VST) for normalization
+vst_data <- varianceStabilizingTransformation(dds_mage, blind = FALSE)
+# 3. Extract the normalized count matrix
+norm_counts <- assay(vst_data)
+# 4. Replace Ensembl IDs with Gene Symbols in rownames (if not already done)
+rownames(norm_counts) <- rowData(dds_mage)$GeneSymbol
+# 5. Create annotation data frame for the heatmap
+df <- as.data.frame(colData(dds)[, "Phenotype", drop = FALSE]) # Select the "Phenotype" column
+rownames(df) <- rownames(colData(dds)) # Ensure rownames match the colnames of the normalized counts
+# 6. Define annotation colors
+ann_col <- list(
+Phenotype = c("IDCLumA" = "#F46D43",
+"IDCLumB" = "#708238",
+"IDCBasal" = "#9E0142",
+"IDCHer2" = "beige",
+"Normal" = "violet")
+)
+# 7. Define breaks for the color legend
+color_breaks <- seq(min(norm_counts), max(norm_counts), length.out = 101)
+legend_breaks <- quantile(color_breaks, probs = seq(0, 1, length.out = 3))
+legend_labels <- c("Low", "Medium", "High")
+# 8. Define color palette
+color_palette <- colorRampPalette(brewer.pal(10, 'PuBu'))(100)
+# 9. Create heatmap
+MAGEA_Heatmap <- pheatmap(
+norm_counts,
+main = 'HEATMAP OF SIGNIFICANT DIFFERENTIALLY EXPRESSED MAGEA GENES',
+color = color_palette,
+cluster_rows = TRUE,
+cluster_cols = TRUE,
+clustering_distance_cols = 'euclidean',
+clustering_distance_rows = 'euclidean',
+clustering_method = 'ward.D',
+annotation_colors = ann_col,
+annotation_col = df, # Use the "Phenotype" column for annotations
+show_rownames = TRUE,
+show_colnames = FALSE,
+fontsize = 8,
+fontsize_row = 6,
+fontsize_col = 4,
+angle_col = 45,
+breaks = color_breaks,
+legend_breaks = legend_breaks,
+legend_labels = legend_labels
+)
+
+```
+
+```{r}
+# Saving the heatmap to PDF
+pdf("./Deseq_heatmap_plot.pdf", height = 10, width = 8)
+# 9. Save the heatmap as a JPG file
+jpeg("MAGEA_Heatmap.jpg", width = 1200, height = 1000, res = 150)
+
+print(MAGEA_Heatmap)
+dev.off()
+
+```
+
+LumA Vs Normal
+```{r}
+# . IDCLumA vs Normal
+#Extract results for IDCLumA vs Normal
+res <- results(dds, contrast=c("Phenotype","IDCLumA","Normal"))
+res <- res[order(res$pvalue),] #order results by smallest pvalue
+res.sig.lumA <- subset(res, padj < 0.05) # filter significant differentially expressed genes (DEGs)
+dim(res.sig.lumA) #check number significant DEGs
+res.sig.lumA
+summary(res.sig.lumA)
+write.csv(as.data.frame(res.sig.lumA), file="./LumA_DEGs.csv", row.names=TRUE)
+
+```
+
+26687 significant genes are deferentially expressed between Luminal A vs Normal samples 51% are up regulated,
+and 49% are downregulated
+```{r}
+LumA_DEGs <- read.csv("/etc/ace-data/home/cknabukeera/R/LumA_DEGs.csv")
+rownames(LumA_DEGs) <- LumA_DEGs$X
+LumA_DEGs <- LumA_DEGs[, -1]
+head(LumA_DEGs)
+print(nrow(LumA_DEGs))
+# remove the last digits on the ensemble ids after a point/ dot.
+row.names(LumA_DEGs) <- gsub("\\..*","",row.names(LumA_DEGs))
+# Create a column of Gene symbol by converting ensemble ids to gene symbol
+LumA_DEGs$GeneSymbol <- mapIds(EnsDb.Hsapiens.v86, keys = rownames(LumA_DEGs), column = "SYMBOL", keytype = "GENEID") ## Warning: Unable to map 307 of 26687 requested IDs.
+write.csv(as.data.frame(LumA_DEGs), file="./LumA_DEGs_ann.csv", row.names=TRUE)
+# Retrieve the unmapped Ensembl IDs
+unmapped_ids <- rownames(LumA_DEGs)[is.na(LumA_DEGs$GeneSymbol)]
+# Optional: Print or save the unmapped IDs to a file
+print(unmapped_ids)
+
+```
+
+```{r}
+# Filter rows where GeneSymbol contains "MAGE"
+LumA_mage_genes <- LumA_DEGs[grep("MAGE", LumA_DEGs$GeneSymbol), ]
+LumA_mage_genes <- LumA_mage_genes[order(LumA_mage_genes$pvalue),] #order results by smallest pvalue
+head(LumA_mage_genes)
+write.csv(as.data.frame(LumA_mage_genes), file="./LumA_DEG_MAGEs.csv", row.names=TRUE)
+LumA_magea_genes <- LumA_DEGs[grep("MAGEA", LumA_DEGs$GeneSymbol), ]
+write.csv(as.data.frame(LumA_magea_genes), file="./LumA_DEG_MAGEAs.csv", row.names=TRUE)
+head(LumA_magea_genes)
+print(nrow(LumA_magea_genes))
+#Plotting MA plots for differentially significant expressed genes(pvalue<0.5)
+# Call plotMA from DESeq2 specifically
+DESeq2::plotMA(res.sig.lumA, ylim = c(-5, 5))
+
+
+```
+
+```{r}
+#Visualization
+# Make a new copy of the results
+res.gene <- as.data.frame(res)
+# remove the last digits on the ensemble ids after a point/ dot.
+row.names(res.gene) <- gsub("\\..*","",row.names(res.gene))
+# Create a column of Gene symbol by converting ensemble ids to gene symbol
+res.gene$GeneSymbol <- mapIds(EnsDb.Hsapiens.v86, keys = rownames(res.gene), column = "SYMBOL", keytype= "GENEID")## Warning: Unable to map 1674 of 53995 requested IDs.
+# Reset row names as gene symbols
+res.gene$GeneSymbol <- make.unique(res.gene$GeneSymbol ,sep = ".")
+res.gene <- na.omit(res.gene)
+row.names(res.gene) <- res.gene$GeneSymbol
+#Plot MA
+res.gene.1 <- mutate(res.gene, sig=ifelse(res.gene$padj<0.05,"TRUE","FALSE"))
+# Create a new column called sig
+res.gene.2 <- data.frame(res.gene.1$baseMean,res.gene.1$log2FoldChange,res.gene.1$sig)
+colnames(res.gene.2) <- c("baseMean", "log2FoldChange", "padj")
+row.names(res.gene.2) <- row.names(res.gene.1)
+res.gene.2$padj <- as.logical(res.gene.2$padj)
+LumA_MAplot <- DESeq2::plotMA(res, ylim=c(-12,12))
+title(main = list("MA-Plot of DEGs for IDCLumA vs Normal", cex = 1, font = 2))
+```
+```{r}
+# Saving the heatmap to PDF
+pdf("./LumA_MAplot.jpg", height = 10, width = 8)
+print(LumA_MAplot)
+dev.off()
+```
+
+```{r}
+#Volcano Plots
+# The significantly differentially expressed genes are the ones found in the upper-left and upper-right# Add a column to the data frame to specify if they are UP- or DOWN- regulated (log2FoldChange respecti# add a column of NAs
+res.gene$diffexpressed <- "NO"
+# if log2Foldchange > 1.0 and p-adj < 0.05, set as "UP"
+res.gene$diffexpressed[res.gene$log2FoldChange > 1.0 & res.gene$padj < 0.05] <- "UP"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+res.gene$diffexpressed[res.gene$log2FoldChange < -1.0 & res.gene$padj < 0.05] <- "DOWN"
+# Create a new column "delabel" to res.Gene , that will contain the name of genes differentially expresres.gene$delabel <- NA # start by having a delabel column of NAs
+res.gene$SYMBOL <- row.names(res.gene)
+res.gene$delabel[res.gene$diffexpressed != "NO"] <- row.names(res.gene)[res.gene$diffexpressed != "NO"]
+## Create a volcano plot
+library(ggplot2)
+library(ggrepel)
+ggplot(res.gene, aes(log2FoldChange, -log10(padj))) +
+  geom_point(aes(col=diffexpressed)) +
+scale_color_manual(values = c("blue","black","red")) +
+theme_classic() + geom_text_repel(aes(label=delabel),max.overlaps = 5) +
+labs(title="Volcano Plot of DEGs for IDCLumA vs Normal") +
+theme(plot.title = element_text(hjust = 0.5, size = 13, face = "bold")) +
+geom_vline(xintercept = 1, linetype="dotted") +
+geom_vline(xintercept = -1, linetype="dotted")+scale_y_continuous(limits=c(0,400))
+```
+
+```{r}
+# Assuming 'gene_name' is the column containing gene names and MAGE genes are labeled like "MAGEA1", "MAGEA12" etc)
+mage_genes <- res.gene[grepl("MAGE", res.gene$GeneSymbol), ]
+# Create the volcano plot for only MAGE genes
+library(ggplot2)
+library(ggrepel)
+ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
+geom_point(aes(col=diffexpressed)) +
+scale_color_manual(values = c("blue", "black", "red")) +
+theme_classic() +
+geom_text_repel(aes(label=delabel), max.overlaps = 5) +
+labs(title="Volcano Plot of MAGE Genes for IDCLumA vs Normal") +
+  theme(plot.title = element_text(hjust = 0.5, size = 13, face = "bold")) +
+geom_vline(xintercept = 1, linetype="dotted") +
+geom_vline(xintercept = -1, linetype="dotted") +
+scale_y_continuous(limits=c(0,70))
+
+```
+
+LumB Vs Normal
+```{r}
+## IDCLumB vs Normal
+#Extract results for IDCLumB vs Normal
+res <- results(dds, contrast=c("Phenotype","IDCLumB","Normal"))
+res <- res[order(res$pvalue),] #order results by smallest pvalue
+res.sig.lumB <- subset(res, padj < 0.05) # filter significant differentially expressed genes (DEGs)
+dim(res.sig.lumB) #check number significant DEGs
+res.sig.lumB
+summary(res.sig.lumB)
+write.csv(as.data.frame(res.sig.lumB), file="./LumB_DEGs.csv", row.names=TRUE)
+
+```
+27491 genes are deferentially expressed in LumB Vs Normal 51% are upregulated and 49% are downregulated
+
+```{r}
+#Visualization
+# Make a new copy of the results
+res.gene <- as.data.frame(res)
+# remove the last digits on the ensemble ids after a point/ dot.
+row.names(res.gene) <- gsub("\\..*","",row.names(res.gene))
+# Create a column of Gene symbol by converting ensemble ids to gene symbol
+res.gene$GeneSymbol <- mapIds(EnsDb.Hsapiens.v86, keys = rownames(res.gene), column = "SYMBOL", keytype="GENEID")
+# Reset row names as gene symbols
+res.gene$GeneSymbol <- make.unique(res.gene$GeneSymbol ,sep = ".")
+res.gene <- na.omit(res.gene)
+row.names(res.gene) <- res.gene$GeneSymbol
+#Plot MA
+res.gene.1 <- mutate(res.gene, sig=ifelse(res.gene$padj<0.05,"TRUE","FALSE"))
+# Create a new column called sig
+res.gene.2 <- data.frame(res.gene.1$baseMean,res.gene.1$log2FoldChange,res.gene.1$sig)
+colnames(res.gene.2) <- c("baseMean", "log2FoldChange", "padj")
+row.names(res.gene.2) <- row.names(res.gene.1)
+res.gene.2$padj <- as.logical(res.gene.2$padj)
+DESeq2::plotMA(res, ylim=c(-12,12))
+title(main = list("MA-Plot of DEGs for IDCLumB vs Normal", cex = 1, font = 2))
+
+```
+
+```{r}
+#Plotting MA plots for differentially significant expressed genes(pvalue<0.5)
+# Call plotMA from DESeq2 specifically
+DESeq2::plotMA(res.sig.lumB, ylim=c(-12,12))
+title(main = list("MA-Plot of significant DEGs for IDCLumB vs Normal", cex = 1, font = 2))
+DESeq2::plotMA(res.sig.lumB, ylim = c(-5, 5))
+#Volcano Plots
+# The significant DEGs are found in the upper-left and upper-right corners.
+# Add a column to the data frame to specify if they are UP- or DOWN- regulated (log2FoldChange respecti# add a column of NAs
+res.gene$diffexpressed <- "NO"
+```
+
+```{r}
+# if log2Foldchange > 1.0 and p-adj < 0.05, set as "UP"
+res.gene$diffexpressed[res.gene$log2FoldChange > 1.0 & res.gene$padj < 0.05] <- "UP"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+res.gene$diffexpressed[res.gene$log2FoldChange < -1.0 & res.gene$padj < 0.05] <- "DOWN"
+# Create a new column "delabel" to res.Gene , that will contain the name of genes differentially expresres.gene$delabel <- NA # start by having a delabel column of NAs
+res.gene$SYMBOL <- row.names(res.gene)
+res.gene$delabel[res.gene$diffexpressed != "NO"] <- row.names(res.gene)[res.gene$diffexpressed != "NO"]
+## Create a volcano plot
+library(ggplot2)
+library(ggrepel)
+ggplot(res.gene, aes(log2FoldChange, -log10(padj))) +
+geom_point(aes(col=diffexpressed)) +
+scale_color_manual(values = c("blue","black","red")) +
+theme_classic() + geom_text_repel(aes(label=delabel),max.overlaps = 5) +
+labs(title="Volcano Plot for DEGs of IDCLumB vs Normal") +
+  theme(plot.title = element_text(hjust = 0.5, size = 13, face = "bold")) +
+geom_vline(xintercept = 1, linetype="dotted") +
+geom_vline(xintercept = -1, linetype="dotted")+scale_y_continuous(limits=c(0,400))
+```
+
+```{r}
+# Assuming 'gene_name' is the column containing gene names and MAGE genes are labeled like "MAGEA1", "MAGEA12" etc)
+mage_genes <- res.gene[grepl("MAGE", res.gene$GeneSymbol), ]
+# Create the volcano plot for only MAGE genes
+library(ggplot2)
+library(ggrepel)
+ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
+geom_point(aes(col=diffexpressed)) +
+scale_color_manual(values = c("blue", "black", "red")) +
+theme_classic() +
+geom_text_repel(aes(label=delabel), max.overlaps = 5) +
+labs(title="Volcano Plot of MAGE Genes for IDCLumB vs Normal") +
+theme(plot.title = element_text(hjust = 0.5, size = 13, face = "bold")) +
+geom_vline(xintercept = 1, linetype="dotted") +
+geom_vline(xintercept = -1, linetype="dotted") +
+scale_y_continuous(limits=c(0,70))
+
+```
+
+```{r}
+LumB_DEGs <- read.csv("./LumB_DEGs.csv")
+rownames(LumB_DEGs) <- LumB_DEGs$X
+LumB_DEGs <- LumB_DEGs[, -1]
+head(LumB_DEGs)
+print(nrow(LumB_DEGs))
+# remove the last digits on the ensemble ids after a point/ dot.
+row.names(LumB_DEGs) <- gsub("\\..*","",row.names(LumB_DEGs))
+# Create a column of Gene symbol by converting ensemble ids to gene symbol
+LumB_DEGs$GeneSymbol <- mapIds(EnsDb.Hsapiens.v86, keys = rownames(LumB_DEGs), column = "SYMBOL", keytype = "GENEID")
+write.csv(as.data.frame(LumB_DEGs), file="./LumB_DEGs_ann.csv", row.names=TRUE)
+
+```
+
+```{r}
+# Filter rows where GeneSymbol contains "MAGE"
+LumB_mage_genes <- LumB_DEGs[grep("MAGE", LumB_DEGs$GeneSymbol), ]
+LumB_mage_genes <- LumB_mage_genes[order(LumB_mage_genes$pvalue),] #order results by smallest pvalue
+head(LumB_mage_genes)
+write.csv(as.data.frame(LumB_mage_genes), file="./LumB_DEG_MAGEs.csv", row.names=TRUE)
+LumB_magea_genes <- LumB_DEGs[grep("MAGEA", LumB_DEGs$GeneSymbol), ]
+write.csv(as.data.frame(LumB_magea_genes), file="./LumB_DEG_MAGEAs.csv", row.names=TRUE)
+head(LumB_magea_genes)
+
+```
+Her2 Vs Normal
+```{r}
+#Extract results for IDCHer2 vs Normal
+res <- results(dds, contrast=c("Phenotype","IDCHer2","Normal"))
+res <- res[order(res$pvalue),] #order results by smallest pvalue
+res.sig.Her2 <- subset(res, padj < 0.05) # filter significant differentially expressed genes (DEGs)
+dim(res.sig.Her2) #check number significant DEGs
+res.sig.Her2
+summary(res.sig.Her2)
+write.csv(as.data.frame(res.sig.Her2), file="./Her2_DEGs.csv", row.names=TRUE)
+
+```
+
+24899 genes are differentially expressed between Her2 vs Normal
+13085 are significantly upregulated and 11814 are downregulated
+
+```{r}
+#Visualization
+# Make a new copy of the results
+res.gene <- as.data.frame(res)
+# remove the last digits on the ensemble ids after a point/ dot.
+row.names(res.gene) <- gsub("\\..*","",row.names(res.gene))
+# Create a column of Gene symbol by converting ensemble ids to gene symbol
+res.gene$GeneSymbol <- mapIds(EnsDb.Hsapiens.v86, keys = rownames(res.gene), column = "SYMBOL", keytype= "GENEID")
+# Reset row names as gene symbols
+res.gene$GeneSymbol <- make.unique(res.gene$GeneSymbol ,sep = ".")
+res.gene <- na.omit(res.gene)
+row.names(res.gene) <- res.gene$GeneSymbol
+#Plot MA
+res.gene.1 <- mutate(res.gene, sig=ifelse(res.gene$padj<0.05,"TRUE","FALSE"))
+# Create a new column called sig
+res.gene.2 <- data.frame(res.gene.1$baseMean,res.gene.1$log2FoldChange,res.gene.1$sig)
+colnames(res.gene.2) <- c("baseMean", "log2FoldChange", "padj")
+row.names(res.gene.2) <- row.names(res.gene.1)
+res.gene.2$padj <- as.logical(res.gene.2$padj)
+DESeq2::plotMA(res, ylim=c(-12,12))
+title(main = list("MA-Plot of DEGs for IDCHer2 vs Normal", cex = 1, font = 2))
+DESeq2::plotMA(res.sig.Her2, ylim=c(-12,12))
+title(main = list("MA-Plot of significant DEGs for IDCHer2 vs Normal", cex = 1, font = 2))
+```
+
+```{r}
+#Volcano Plots
+# The significant DEGs are found in the upper-left and upper-right corners.
+# Add a column to the data frame to specify if they are UP- or DOWN- regulated (log2FoldChange respecti# add a column of NAs
+res.gene$diffexpressed <- "NO"
+# if log2Foldchange > 1.0 and p-adj < 0.05, set as "UP"
+res.gene$diffexpressed[res.gene$log2FoldChange > 1.0 & res.gene$padj < 0.05] <- "UP"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+res.gene$diffexpressed[res.gene$log2FoldChange < -1.0 & res.gene$padj < 0.05] <- "DOWN"
+# Create a new column "delabel" to res.Gene , that will contain the name of genes differentially expresres.gene$delabel <- NA # start by having a delabel column of NAs
+res.gene$SYMBOL <- row.names(res.gene)
+res.gene$delabel[res.gene$diffexpressed != "NO"] <- row.names(res.gene)[res.gene$diffexpressed != "NO"]
+## Create a volcano plot
+library(ggplot2)
+library(ggrepel)
+ggplot(res.gene, aes(log2FoldChange, -log10(padj))) +
+geom_point(aes(col=diffexpressed)) +
+scale_color_manual(values = c("blue","black","red")) +
+theme_classic() + geom_text_repel(aes(label=delabel),max.overlaps = 5) +
+labs(title="Volcano Plot for DEGs of IDCHer2 vs Normal") +
+theme(plot.title = element_text(hjust = 0.5, size = 13, face = "bold")) +
+geom_vline(xintercept = 1, linetype="dotted") +
+geom_vline(xintercept = -1, linetype="dotted")+scale_y_continuous(limits=c(0,400))
+```
+
+```{r}
+# Assuming 'gene_name' is the column containing gene names and MAGE genes are labeled like "MAGEA1", "MAGEA12" etc
+mage_genes <- res.gene[grepl("MAGE", res.gene$GeneSymbol), ]
+# Create the volcano plot for only MAGE genes
+library(ggplot2)
+library(ggrepel)
+ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
+geom_point(aes(col=diffexpressed)) +
+scale_color_manual(values = c("black", "red")) +
+theme_classic() +
+geom_text_repel(aes(label=delabel), max.overlaps = 5) +
+labs(title="Volcano Plot of MAGE Genes for IDCHer2 vs Normal") +
+theme(plot.title = element_text(hjust = 0.5, size = 13, face = "bold")) +
+geom_vline(xintercept = 1, linetype="dotted") +
+geom_vline(xintercept = -1, linetype="dotted") +
+scale_y_continuous(limits=c(0,70))
+```
+
+```{r}
+Her2_DEGs <- read.csv("./Her2_DEGs.csv")
+rownames(Her2_DEGs) <- Her2_DEGs$X
+Her2_DEGs <- Her2_DEGs[, -1]
+head(Her2_DEGs)
+print(nrow(Her2_DEGs))
+# remove the last digits on the ensemble ids after a point/ dot.
+row.names(Her2_DEGs) <- gsub("\\..*","",row.names(Her2_DEGs))
+# Create a column of Gene symbol by converting ensemble ids to gene symbol
+Her2_DEGs$GeneSymbol <- mapIds(EnsDb.Hsapiens.v86, keys = rownames(Her2_DEGs), column = "SYMBOL", keytype = "GENEID")
+write.csv(as.data.frame(Her2_DEGs), file="./Her2_DEGs_ann.csv", row.names=TRUE)
+# Filter rows where GeneSymbol contains "MAGE"
+Her2_mage_genes <- Her2_DEGs[grep("MAGE", Her2_DEGs$GeneSymbol), ]
+Her2_mage_genes <- Her2_mage_genes[order(Her2_mage_genes$pvalue),] #order results by smallest pvalue
+head(Her2_mage_genes)
+
+
+```
+```{r}
+write.csv(as.data.frame(Her2_mage_genes), file="./Her2_DEG_MAGEs.csv", row.names=TRUE)
+Her2_magea_genes <- Her2_DEGs[grep("MAGEA", Her2_DEGs$GeneSymbol), ]
+write.csv(as.data.frame(Her2_magea_genes), file="./Her2_DEG_MAGEAs.csv", row.names=TRUE)
+head(Her2_magea_genes)
+
+```
+
+BASAL Vs Normal
+
+```{r}
+#Extract results for IDCBasal vs Normal
+res <- results(dds, contrast=c("Phenotype","IDCBasal","Normal"))
+res <- res[order(res$pvalue),] #order results by smallest pvalue
+res.sig.Basal <- subset(res, padj < 0.05) # filter significant differentially expressed genes (DEGs)
+dim(res.sig.Basal) #check number significant DEGs
+res.sig.Basal
+summary(res.sig.Basal)
+write.csv(as.data.frame(res.sig.Basal), file="./Basal_DEGs.csv", row.names=TRUE)
+
+```
+27858 genes are differentially expressed between Basal subtypes and Normal 57% of these are upregulated
+and 43% are down regulated
+
+```{r}
+#Visualization
+# Make a new copy of the results
+res.gene <- as.data.frame(res)
+# remove the last digits on the ensemble ids after a point/ dot.
+row.names(res.gene) <- gsub("\\..*","",row.names(res.gene))
+# Create a column of Gene symbol by converting ensemble ids to gene symbol
+res.gene$GeneSymbol <- mapIds(EnsDb.Hsapiens.v86, keys = rownames(res.gene), column = "SYMBOL", keytype="GENEID")
+
+```
+```{r}
+# Reset row names as gene symbols
+res.gene$GeneSymbol <- make.unique(res.gene$GeneSymbol ,sep = ".")
+res.gene <- na.omit(res.gene)
+row.names(res.gene) <- res.gene$GeneSymbol
+#Plot MA
+res.gene.1 <- mutate(res.gene, sig=ifelse(res.gene$padj<0.05,"TRUE","FALSE"))
+# Create a new column called sig
+res.gene.2 <- data.frame(res.gene.1$baseMean,res.gene.1$log2FoldChange,res.gene.1$sig)
+colnames(res.gene.2) <- c("baseMean", "log2FoldChange", "padj")
+row.names(res.gene.2) <- row.names(res.gene.1)
+res.gene.2$padj <- as.logical(res.gene.2$padj)
+DESeq2::plotMA(res, ylim=c(-12,12))
+title(main = list("MA-Plot of DEGs for IDCBasal vs Normal", cex = 1, font = 2))
+```
+
+```{r}
+#Volcano Plots
+# The significant DEGs are found in the upper-left and upper-right corners.
+# Add a column to the data frame to specify if they are UP- or DOWN- regulated (log2FoldChange respecti# add a column of NAs
+res.gene$Expression <- "NO"
+# if log2Foldchange > 1.0 and p-adj < 0.05, set as "UP"
+res.gene$Expression[res.gene$log2FoldChange > 1.0 & res.gene$padj < 0.05] <- "UP"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+res.gene$Expression[res.gene$log2FoldChange < -1.0 & res.gene$padj < 0.05] <- "DOWN"
+# Create a new column "delabel" to res.Gene , that will contain the name of genes differentially expresres.gene$delabel <- NA # start by having a delabel column of NAs
+res.gene$SYMBOL <- row.names(res.gene)
+res.gene$delabel[res.gene$Expression != "NO"] <- row.names(res.gene)[res.gene$Expression != "NO"]
+## Create a volcano plot
+library(ggplot2)
+library(ggrepel)
+ggplot(res.gene, aes(log2FoldChange, -log10(padj))) +
+geom_point(aes(col=Expression)) +
+scale_color_manual(values = c("blue","black","red")) +
+theme_classic() + geom_text_repel(aes(label=delabel),max.overlaps = 8) + labs(title="Volcano Plot for DEGS in IDCBasal Vs Normal") +
+theme(plot.title = element_text(hjust = 0.5, size = 13, face = "bold")) +
+geom_vline(xintercept = 1, linetype="dotted") +
+geom_vline(xintercept = -1, linetype="dotted")+scale_y_continuous(limits=c(0,400))
+```
+
+
+
+```{r}
+# Assuming 'gene_name' is the column containing gene names and MAGE genes are labeled like "MAGEA1", "MAGEA12" etc
+mage_genes <- res.gene[grepl("MAGE", res.gene$GeneSymbol), ]
+# Create the volcano plot for only MAGE genes
+library(ggplot2)
+library(ggrepel)
+ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
+geom_point(aes(col=Expression)) +
+scale_color_manual(values = c("blue","black","red")) +
+theme_classic() + geom_text_repel(aes(label=delabel),max.overlaps = 5) + labs(title="Volcano Plot for DEGs for IDCBasal Vs Normal") + theme(plot.title = element_text(hjust = 0.5, size = 13, face = "bold")) +
+geom_vline(xintercept = 1, linetype="dotted") +
+geom_vline(xintercept = -1, linetype="dotted")+scale_y_continuous(limits=c(0, 70))
+
+```
+
+```{r}
+Basal_DEGs <- read.csv("./Basal_DEGs.csv")
+rownames(Basal_DEGs) <- Basal_DEGs$X
+Basal_DEGs <- Basal_DEGs[, -1]
+head(Basal_DEGs)
+print(nrow(Basal_DEGs))
+# remove the last digits on the ensemble ids after a point/ dot.
+row.names(Basal_DEGs) <- gsub("\\..*","",row.names(Basal_DEGs))
+# Create a column of Gene symbol by converting ensemble ids to gene symbol
+Basal_DEGs$GeneSymbol <- mapIds(EnsDb.Hsapiens.v86, keys = rownames(Basal_DEGs), column = "SYMBOL", keytype = "GENEID")
+write.csv(as.data.frame(Basal_DEGs), file="./Basal_DEGs_ann.csv", row.names=TRUE)
+# Filter rows where GeneSymbol contains "MAGE"
+Basal_mage_genes <- Basal_DEGs[grep("MAGE", Basal_DEGs$GeneSymbol), ]
+Basal_mage_genes <- Basal_mage_genes[order(Basal_mage_genes$pvalue),] #order results by smallest pvaluhead(Basal_mage_genes)
+
+
+```
+
+```{r}
+write.csv(as.data.frame(Basal_mage_genes), file="./Basal_DEG_MAGEs.csv", row.names=TRUE)
+Basal_magea_genes <- Basal_DEGs[grep("MAGEA", Basal_DEGs$GeneSymbol), ]
+write.csv(as.data.frame(Basal_magea_genes), file="./Basal_DEG_MAGEAs.csv", row.names=TRUE)
+head(Basal_magea_genes)
+```
+
+Venn Diagram - The venn diagram below shows the numbers of differentially expresssed genes that are either distinct or shared among different breast cancer histological types
+
+```{r}
+#Create a list of differentially expressed genes per breast cancer histological types
+DGE_list <- list("IDCLumA"=row.names(res.sig.lumA),
+"IDCLumB"=row.names(res.sig.lumB),
+"IDCHer2"=row.names(res.sig.Her2),
+"IDCBasal"=row.names(res.sig.Basal))
+# Plot the venn diagram
+ven <- ggvenn(DGE_list, show_elements = FALSE, stroke_color = "Red",
+              stroke_linetype = "solid", set_name_size = 3.8) +
+       ggtitle(" ALL Differentially Expressed Genes Across IDC Subtypes") +
+       theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+ven
+```
+
+```{r}
+#Create a list of differentially expressed genes per breast cancer histological types
+DGE_list <- list("IDCLumA"=row.names(LumA_magea_genes),
+"IDCLumB"=row.names(LumB_magea_genes),
+"IDCHer2"=row.names(Her2_magea_genes),
+"IDCBasal"=row.names(Basal_magea_genes))
+# Plot the venn diagram
+ven <- ggvenn(DGE_list, show_elements = FALSE, stroke_color = "Red",
+              stroke_linetype = "solid", set_name_size = 3.8) +
+       ggtitle("MAGEA
+               Differentially Expressed Genes Across IDC Subtypes") +
+       theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+ven
+```
+
+
+
+```{r}
+#PREPARING DATA FOR SURVIVAL ANALYSIS
+#Running this part to enable normalization for Survival Analysis, Given DESEq2 doesnt require normalization
+newdata <- data + 1
+# Create DESeqDataSet
+new_dds <- DESeqDataSetFromMatrix(countData = newdata,
+colData = metadata,
+design = ~Phenotype)
+# Pre filtering to keep only rows that have at least 10 reads total
+keep <- rowSums(counts(new_dds)) >= 10
+new_dds <- new_dds[keep,]
+
+```
+```{r}
+#QUALITY CONTROL
+# Filtering out genes with low counts
+new_dds <- new_dds[rowSums(counts(new_dds)) > 10, ]
+
+# Normalizing counts
+new_dds <- estimateSizeFactors(new_dds)
+normalized_counts <- counts(new_dds, normalized = TRUE)
+#Saving the normalized counts as csv for Survival Analysis
+write.csv(normalized_counts, "./normalized_dds_counts.csv")
+
+```
+
+```{r}
+
+```
+
