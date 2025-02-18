@@ -1,0 +1,407 @@
+---
+title: "MAGEA12 peptide prediction"
+author: "Kevin Cissie"
+date: "2024-06-13"
+output: html_document
+---
+```{r}
+# OBJECTIVE 3: PART1: OBTAINING THE MAGEA12 GENE- PEPTIDE PREDICTION
+# peptides of varying length are to translated from the gene
+```
+
+```{r}
+# Changing my working directory
+getwd() # Checking director
+```
+```{r}
+#install.packages("Biostrings")
+library(Biostrings) # Handles biological sequences
+```
+
+
+```{r}
+#Downloading the MAGEA12 gene from  https://www.ncbi.nlm.nih.gov/gene/
+# Accessing ncibi
+
+#install.packages("rentrez")
+library(rentrez) # allows access to ncbi database
+
+#Obtaining the MAGEA12 reference sequence
+MAGEA12refseqgene <- entrez_fetch(db = "nuccore", id ="NG_013228.2", rettype = "fasta", retmode = "text")
+writeLines(MAGEA12refseqgene, "MAGEA12refseqgene.fasta") # saving the text as a fasta 
+
+#Since we're trying to see what peptides are coded for from the gene, considering mRNA transcripts is a better idea than the gene
+
+#From NCBI, 
+#MAGEA12 has 3 mRNA transcripts variants
+transcript2 = "NM_001166387"  # Has 1792 bp 
+transcript3 = "NM_005367.7" # has 1686 bp
+transcript1 = "NM_001166386.3" # Has 1862 bp 
+transcripts = c(transcript1, transcript2, transcript3)
+
+# Taking the longest transcript
+MAGEA12_mRNA1 <- entrez_fetch(db ="nuccore", id = transcript1, rettype = "fasta", retmode = "text")
+#saving the transcript as a FASTA file
+writeLines(MAGEA12_mRNA1, "MAGEA12mRNA1.fasta")
+
+
+```
+
+```{r}
+# Creating a loop that iterates through to obtain all the transcripts
+transcripts = c(transcript1, transcript2, transcript3)
+
+  # Iterate through each transcript and fetch the sequence
+for (transcript in transcripts) {
+  # Fetch the transcript sequence from NCBI
+  mRNA_sequence <- entrez_fetch(db = "nuccore", id = transcript, rettype = "fasta", retmode = "text")
+  
+  # Define the file name for saving the transcript as a FASTA file
+  file_name <- paste0(transcript, ".fasta")
+  
+  # Save the transcript sequence as a FASTA file
+  writeLines(mRNA_sequence, file_name)
+  
+  # Print a message indicating the file has been saved
+  cat("Saved", transcript, "as", file_name, "\n")
+  
+}
+  
+```
+
+
+```{r}
+
+# GENERATING KMERS OF VARYING LENGTH FROM
+#Using the Biostrings package to obtain the kmers of the peptides
+library(Biostrings) # Handles biological seqeunces
+
+#Since HLA class I binding groove takes peptides kmers between 8<=k>= 10, 
+#we're going to generate kmers of length 8, and 10,9,10
+#Multipying by 3 to get the required nucleotide length for resultant kmer length
+
+#Writing a function that takes each transcript and generates kmers
+# Function to generate k-mers of a specified length from a sequence
+generate_kmers <- function(sequence, k) {
+    kmers <- sapply(1:(nchar(sequence) - k + 1), function(i) substr(sequence, i, i + k - 1))
+    return(kmers)
+}
+
+# Creating a loop that iterates through to obtain all the transcripts
+transcripts = c(transcript1, transcript2, transcript3)
+
+  # Iterate through each transcript and fetch the sequence
+for (transcript in transcripts) {
+  # Fetch the transcript sequence from NCBI
+  mRNA_sequence <- entrez_fetch(db = "nuccore", id = transcript, rettype = "fasta", retmode = "text")
+  
+  # Extract the sequence from the FASTA format
+  mRNA_seq <- unlist(strsplit(mRNA_sequence, "\n"))
+  mRNA_seq <- paste(mRNA_seq[-1], collapse = "")
+  
+  # Define the file name for saving the transcript as a FASTA file
+  file_name <- paste0(transcript, ".fasta")
+  
+  # Save the transcript sequence as a FASTA file
+  writeLines(mRNA_sequence, file_name)
+  
+  # Print a message indicating the file has been saved
+  cat("Saved", transcript, "as", file_name, "\n")
+  }
+  
+
+# Generate k-mers of length 8 and 10 from the mRNA sequence
+kmers_8 <- generate_kmers(mRNA_seq, 24)
+kmers_10 <- generate_kmers(mRNA_seq, 30)
+# Save the k-mers to separate files
+  kmers_8_file <- paste0(transcript, "_kmers_8.csv")
+  kmers_10_file <- paste0(transcript, "_kmers_10.csv")
+  
+  write.csv(data.frame(kmers_8 = kmers_8), kmers_8_file, row.names = FALSE)
+  write.csv(data.frame(kmers_10 = kmers_10), kmers_10_file, row.names = FALSE)
+  
+  # Print a message indicating the k-mers have been saved
+  cat("Saved 8-mers for", transcript, "as", kmers_8_file, "\n")
+  cat("Saved 10-mers for", transcript, "as", kmers_10_file, "\n")
+
+# View the first few k-mers of each length
+head(kmers_8)
+head(kmers_10)
+
+```
+
+
+```{r}
+# Load necessary library
+library(rentrez)
+
+# Combining the steps into a function to generate kmers(8,9,10) from the entrez MAGEA12 transcripts 
+
+# Define transcript IDs
+transcript1 <- "NM_001166386.3" # Has 1862 bp 
+transcript2 <- "NM_001166387.2"  # Has 1792 bp 
+transcript3 <- "NM_005367.7" # has 1686 bp 
+transcripts <- c(transcript1, transcript2, transcript3)
+
+# Function to generate k-mers of a specified length from a sequence
+generate_kmers <- function(sequence, k) {
+    kmers <- sapply(1:(nchar(sequence) - k + 1), function(i) substr(sequence, i, i + k - 1))
+    return(kmers)
+}
+
+# Create directories for the outputs
+if (!dir.exists("kmers")) dir.create("kmers")
+if (!dir.exists("transcripts")) dir.create("transcripts")
+
+# Number of k-mers to display
+n <- 5
+
+# Iterate through each transcript
+for (transcript in transcripts) {
+  # Fetch the transcript sequence from NCBI
+  mRNA_sequence <- entrez_fetch(db = "nuccore", id = transcript, rettype = "fasta", retmode = "text")
+  
+  # Extract the sequence from the FASTA format
+  mRNA_seq <- unlist(strsplit(mRNA_sequence, "\n"))
+  mRNA_seq <- paste(mRNA_seq[-1], collapse = "")
+  
+  # Define the file name for saving the transcript as a FASTA file
+  file_name <- paste0("transcripts/", transcript, ".fasta")
+  
+  # Save the transcript sequence as a FASTA file
+  writeLines(mRNA_sequence, file_name)
+  
+  # Print a message indicating the file has been saved
+  cat("Saved", transcript, "as", file_name, "\n")
+  
+  # Generate k-mers of length 8 and 10 from the mRNA sequence
+  kmers_8 <- generate_kmers(mRNA_seq, 24)
+  kmers_10 <- generate_kmers(mRNA_seq, 30)
+  kmers_9 <- generate_kmers(mRNA_seq, 27)
+
+
+  
+  # Save the k-mers to separate files
+  kmers_8_file <- paste0("kmers/", transcript, "_kmers_8.csv")
+  kmers_10_file <- paste0("kmers/", transcript, "_kmers_10.csv")
+  kmers_9_file <- paste0("kmers/", transcript, "_kmers_9.csv")
+
+
+  write.csv(data.frame(kmers_8 = kmers_8), kmers_8_file, row.names = FALSE)
+  write.csv(data.frame(kmers_10 = kmers_10), kmers_10_file, row.names = FALSE)
+  write.csv(data.frame(kmers_9 = kmers_9), kmers_9_file, row.names = FALSE)
+
+
+  # Print a message indicating the k-mers have been saved
+  cat("Saved 8-mers for", transcript, "as", kmers_8_file, "\n")
+  cat("Saved 10-mers for", transcript, "as", kmers_10_file, "\n")
+  cat("Saved 9-mers for", transcript, "as", kmers_9_file, "\n")
+
+
+  
+  # Count the number of k-mers and print the count(8 and 10 is based off the assumption that HLA class I biding groove takes peptides of length 8<=k>=10)
+  num_kmers_8 <- length(kmers_8)
+  num_kmers_10 <- length(kmers_10)
+  num_kmers_9 <- length(kmers_9)
+
+  cat("Number of 8-mers for", transcript, ":", num_kmers_8, "\n")
+  cat("Number of 10-mers for", transcript, ":", num_kmers_10, "\n")
+  cat("Number of 9-mers for", transcript, ":", num_kmers_9, "\n")
+  
+  # Print the first n k-mers for each k-mer set
+  cat("First", n, "8-mers for", transcript, ":\n")
+  print(head(kmers_8, n))
+  
+  cat("First", n, "10-mers for", transcript, ":\n")
+  print(head(kmers_10, n))
+}
+
+```
+
+
+```{r}
+# Load necessary library
+library(Biostrings)
+
+# Function to translate a nucleotide sequence into a protein sequence
+translate_sequence <- function(sequence) {
+  # Ensure the sequence length is a multiple of 3
+  if (nchar(sequence) %% 3 != 0) {
+    warning("Sequence length is not a multiple of 3; truncating to nearest codon.")
+    sequence <- substr(sequence, 1, floor(nchar(sequence) / 3) * 3)
+  }
+  
+  # Translate the sequence
+  protein <- translate(DNAString(sequence))
+  return(as.character(protein))
+}
+
+# Define transcript IDs
+transcript1 <- "NM_001166386.3" # Has 1862 bp 
+transcript2 <- "NM_001166387.2"  # Has 1792 bp 
+transcript3 <- "NM_005367.7" # Has 1686 bp 
+transcripts <- c(transcript1, transcript2, transcript3)
+
+# Create a directory for protein sequences if it does not exist
+if (!dir.exists("proteins")) dir.create("proteins")
+
+# Initialize an empty list to hold all the proteins for concatenation
+all_proteins <- list()
+
+# Initialize a counter for total peptides
+total_peptides <- 0
+
+# Iterate through each transcript
+for (transcript in transcripts) {
+  # Load the k-mers
+  kmers_8 <- read.csv(paste0("kmers/", transcript, "_kmers_8.csv"))$kmers_8
+  kmers_10 <- read.csv(paste0("kmers/", transcript, "_kmers_10.csv"))$kmers_10
+  kmers_9 <- read.csv(paste0("kmers/", transcript, "_kmers_9.csv"))$kmers_9
+  
+  # Translate the k-mers to protein sequences
+  proteins_8 <- sapply(kmers_8, translate_sequence)
+  proteins_10 <- sapply(kmers_10, translate_sequence)
+  proteins_9 <- sapply(kmers_9, translate_sequence)
+  
+  # Save the translated protein sequences to separate files
+  proteins_8_file <- paste0("proteins/", transcript, "_proteins_8.csv")
+  proteins_10_file <- paste0("proteins/", transcript, "_proteins_10.csv")
+  proteins_9_file <- paste0("proteins/", transcript, "_proteins_9.csv")
+  
+  write.csv(data.frame(proteins_9 = proteins_9), proteins_9_file, row.names = FALSE)
+  write.csv(data.frame(proteins_8 = proteins_8), proteins_8_file, row.names = FALSE)
+  write.csv(data.frame(proteins_10 = proteins_10), proteins_10_file, row.names = FALSE)
+  
+  # Print a message indicating the protein sequences have been saved
+  cat("Saved 8-mer proteins for", transcript, "as", proteins_8_file, "\n")
+  cat("Saved 10-mer proteins for", transcript, "as", proteins_10_file, "\n")
+  cat("Saved 9-mer proteins for", transcript, "as", proteins_9_file, "\n")
+  
+  # Concatenate all proteins into the list
+  all_proteins[[transcript]] <- list(
+    proteins_8 = proteins_8,
+    proteins_9 = proteins_9,
+    proteins_10 = proteins_10
+  )
+  
+  # Update the total peptide count
+  total_peptides <- total_peptides + length(proteins_8) + length(proteins_9) + length(proteins_10)
+}
+
+```
+```{r}
+head(total_peptides)
+#A Total of 15,762 peptides 8-10 kmers long are generated
+```
+```{r}
+#8kmer
+# Concatenating the files of the kmers of each length to obtain files for uploading to NetMHCpan for peptide binding with the genotyped HLA alleles
+file1 <- read.csv("./proteins/NM_001166386.3_proteins_8.csv")
+file2 <- read.csv("./proteins/NM_001166387.2_proteins_8.csv")
+file3 <- read.csv("./proteins/NM_005367.7_proteins_8.csv ")
+MAGEA12peptides_8kmer <- rbind(file1, file2, file3)
+print(nrow(MAGEA12peptides_8kmer)) # 5263 peptides of 8kmer length
+write.csv(MAGEA12peptides_8kmer, "MAGEA12peptides_8kmer.csv")
+
+```
+```{r}
+#9kmer
+# Concatenating the files of the kmers of each length to obtain files for uploading to NetMHCpan for peptide binding with the genotyped HLA alleles
+file1 <- read.csv("./proteins/NM_001166386.3_proteins_9.csv")
+file2 <- read.csv("./proteins/NM_001166387.2_proteins_9.csv")
+file3 <- read.csv("./proteins/NM_005367.7_proteins_9.csv ")
+MAGEA12peptides_9kmer <- rbind(file1, file2, file3)
+print(nrow(MAGEA12peptides_9kmer)) # 5254 peptides of 8kmer length
+write.csv(MAGEA12peptides_9kmer, "MAGEA12peptides_9kmer.csv")
+```
+```{r}
+#10kmer
+# Concatenating the files of the kmers of each length to obtain files for uploading to NetMHCpan for peptide binding with the genotyped HLA alleles
+file1 <- read.csv("./proteins/NM_001166386.3_proteins_10.csv")
+file2 <- read.csv("./proteins/NM_001166387.2_proteins_10.csv")
+file3 <- read.csv("./proteins/NM_005367.7_proteins_10.csv ")
+MAGEA12peptides_10kmer <- rbind(file1, file2, file3)
+print(nrow(MAGEA12peptides_10kmer)) # 5245 peptides of 8kmer length
+write.csv(MAGEA12peptides_10kmer, "MAGEA12peptides_10kmer.csv")
+```
+
+```{r}
+colnames(MAGEA12peptides_8kmer) <- paste0("col", 1:ncol(MAGEA12peptides_8kmer))
+colnames(MAGEA12peptides_9kmer) <- paste0("col", 1:ncol(MAGEA12peptides_9kmer))
+colnames(MAGEA12peptides_10kmer) <- paste0("col", 1:ncol(MAGEA12peptides_10kmer))
+
+MAGEA12peptides <- rbind(MAGEA12peptides_8kmer,MAGEA12peptides_9kmer,MAGEA12peptides_10kmer)
+write.csv(MAGEA12peptides, "MAGEA12peptides.csv")
+print(nrow(MAGEA12peptides))
+```
+
+```{r}
+# Filtering out the peptides with * as IEDB doesnt all these as entries. Using IEDB first because the peptides are too many (15,762)
+# Assuming 'MAGEA12peptides' is your dataframe and the peptide sequences are in 'col1'
+
+# Filter out rows where 'col1' contains an asterisk (*)
+MAGEA12peptides_filtered <- MAGEA12peptides[!grepl("\\*", MAGEA12peptides$col1), ]
+
+# View the filtered dataframe
+length(MAGEA12peptides_filtered) #This reduces the data to 11,181
+write.csv(MAGEA12peptides_filtered,"MAGEA12peptides_filtered.csv")
+
+```
+
+
+```{r}
+# Next part: Peptide binding prediction
+# Loading HLA typed alleles from OptiType and converting them into a format recognized by NetMHCpan
+
+# Load necessary libraries
+library(readxl)
+
+# Step 1: Read the Excel file
+HLA_alleles <- read_excel("D:/IDC_MAGE/HLA Typing/HLA_alleles.xlsx")
+
+# Step 2: Transform the alleles into NetMHCpan recognized format
+HLA_alleles$Alleles <- gsub("(A|B|C)\\*(\\d+):(\\d+)", "HLA-\\1\\2:\\3", HLA_alleles$Alleles)
+
+# Check if the transformation worked correctly
+head(HLA_alleles)
+
+# Step 3: Save the transformed data to CSV
+write.csv(HLA_alleles, "D:/IDC_MAGE/HLA Typing/HLA_alleles_NetMHCpanFormat.csv", row.names = FALSE)
+
+# Step 4: Split data into chunks of 20 alleles per file for NetMHCpan runs
+data <- HLA_alleles
+split_size <- 20
+total_alleles <- nrow(data)
+num_files <- ceiling(total_alleles / split_size)
+
+# Directory where the files will be saved
+output_dir <- "D:/IDC_MAGE/HLA Typing/"
+
+# Step 5: Loop to create separate files and print the alleles in each file in the desired format
+for (i in 1:num_files) {
+  # Calculate the row indices for each chunk
+  start_index <- (i - 1) * split_size + 1
+  end_index <- min(i * split_size, total_alleles)
+  
+  # Extract the subset of alleles
+  chunk <- data[start_index:end_index, ]
+  
+  # Create a file name for each chunk
+  file_name <- paste0(output_dir, "alleles_part_", i, ".csv")
+  
+  # Save each chunk as a CSV file
+  write.csv(chunk, file_name, row.names = FALSE)
+  
+  # Print the alleles in the required format (comma-separated, no spaces)
+  allele_list <- paste0(chunk$Alleles, collapse = ",")
+  cat("File", i, "contains the following alleles:\n")
+  cat(allele_list, "\n\n")
+}
+
+```
+
+
+
+
+
+
