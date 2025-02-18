@@ -1,0 +1,140 @@
+---
+title: "TCR-Peptide-MHC binding Prediction.After genotyping the HLA class I alleles of the study cohort, predicting the MAGEA12 peptides, then strong binder peptide-MHC complexes, Next step, TCR CDR3 sequences pertaining breast cancer subtypes (LumA, LumB, Basal, Her2+). This script aims to predict which p-MHC complexes bind to the CDR3 sequences."
+author: "KEVIN CISSY NABUKEERA"
+date: "1/10/2025"
+output: pdf_document
+geometry: "margin=1.5in"
+fontsize: "11pt"
+---
+
+
+```{r}
+#Loading necessary libraries
+library(dplyr)
+
+```
+
+```{r}
+# Load the p-MHC combinations file (CSV)
+Peptide_MHC <- read.csv("/etc/ace-data/home/cknabukeera/SB_peptides_per_allele.csv")
+head(Peptide_MHC)
+
+
+# Load the CDR3 sequences file (TSV)
+cdr3_data <- read.delim("/etc/ace-data/home/cknabukeera/SRR4102112.tsv", skip = 1) #skip =1 , skips the first metadata line in the file
+head(cdr3_data)
+```
+```{r}
+# Extract CDR3 sequences into a vector
+cdr3_seq <- cdr3_data$AASeq
+head(cdr3_seq)
+
+#Since, the peptide-MHC complexes are already paired based on strong binding and affinity binding between the peptide and HLA alleles, I want to  assign each CDR3 seq to each p-MHC complex
+
+# Create a new column in the Peptide_MHC dataset for the combined p-MHC complex
+Peptide_MHC$pMHC <- paste(Peptide_MHC$MAGEA12peptide,Peptide_MHC$HLAIalleles, sep = "_")
+
+
+# Create all possible combinations of CDR3 sequences and p-MHC complexes
+combinations <- expand.grid(CDR3 = cdr3_seq, pMHC = Peptide_MHC$pMHC)
+
+# Shuffle the combinations for randomness
+set.seed(123)  # For reproducibility
+combinations <- combinations[sample(nrow(combinations)), ]
+
+# View the first few rows
+head(combinations)
+total_combinations <- nrow(combinations)
+print(total_combinations)
+```
+```{r}
+# Ensure the number of combinations matches the dataset
+if (nrow(combinations) < nrow(Peptide_MHC)) {
+  stop("Not enough combinations to match each p-MHC complex.")
+}
+
+# Assign combinations back to the Peptide_MHC dataset
+Peptide_MHC$CDR3 <- combinations$CDR3[1:nrow(Peptide_MHC)]
+
+# View the updated dataset
+head(Peptide_MHC)
+write.csv(Peptide_MHC, "TCR_Peptide_MHC_combinations.csv", row.names = FALSE)
+```
+
+
+```{r}
+#After ensuring each CDR3b sequence matches with each peptide-MHC complex,
+#Isolating the peptide and  CDR3b amino acid sequences to check for possible binding and binding affinity
+
+# Select the two columns
+peptide_cdr3b <- Peptide_MHC[, c("CDR3", "MAGEA12peptide")]
+head(peptide_cdr3b)
+write.csv(peptide_cdr3b, "peptide_cdr3b.csv", row.names = FALSE)
+
+#Counting the number of entries
+total_rows <- nrow(peptide_cdr3b)
+print(total_rows)
+
+```
+```{r}
+#Since we're using the epiTCR Tool, it has a maximum length of 19 expected for its input CDR3b sequences.
+#Counting the length of the CDR3b sequences
+data <- peptide_cdr3b
+data$CDR3 <- as.character(data$CDR3)
+
+data$CDR3_length <- nchar(data$CDR3)
+print(data)
+
+#QUALITY CHECKS
+# The data has sequences longer than 19
+#Filtering out sequences longer than 19
+
+data <- data[data$CDR3_length <= 19, ]
+colnames(data)[1] <- "CDR3b" #The name recognized by epiTCR
+
+colnames(data)[2] <- "epitope" #The name recognized by epiTCR
+
+print(data)
+#This reduces the data to 7196 entries
+
+```
+
+```{r}
+# QUALITY CHECKS
+#Removing peptides with X
+# Check for 'X' in the CDR3b column
+problematic_cdr3b <- data[grep("X", data$CDR3b), ]
+
+# Check for 'X' in the epitope column
+problematic_epitope <- data[grep("X", data$epitope), ]
+
+# View problematic rows
+print(problematic_cdr3b)
+print(problematic_epitope)
+
+#1919 peptides have X in their sequences, dropping these
+clean_data <- data[!grepl("X", data$CDR3b) & !grepl("X", data$epitope), ]
+#Dropping the length column
+clean_data <- clean_data[, -ncol(clean_data)]
+
+print(clean_data)
+#This leaves us with 5277 peptides
+```
+```{r}
+#Adding a binder column to the dataset, this is a requirement of the epiTCR tool
+#Assigning 1 to the binder
+clean_data$binder <- 1 # 1 means the peptide binds to the CDR3 # Assigning 1 to all entries
+head(clean_data)
+write.csv(clean_data, "CDR3_peptide_data_1.csv", row.names = FALSE)
+
+#Assigning 0 to the binder
+clean_data$binder <- 0 # 1 means the peptide binds to the CDR3 # Assigning 1 to all entries
+head(clean_data)
+write.csv(clean_data, "CDR3_peptide_data_0.csv", row.names = FALSE)
+
+
+```
+
+
+
+
