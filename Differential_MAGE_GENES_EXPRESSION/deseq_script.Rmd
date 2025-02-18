@@ -279,7 +279,7 @@ mage_genes <- res.gene[grepl("MAGE", res.gene$GeneSymbol), ]
 # Create the volcano plot for only MAGE genes
 library(ggplot2)
 library(ggrepel)
-ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
+my_plot <- ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
 geom_point(aes(col=diffexpressed)) +
 scale_color_manual(values = c("blue", "black", "red")) +
 theme_classic() +
@@ -289,6 +289,9 @@ labs(title="Volcano Plot of MAGE Genes for IDCLumA vs Normal") +
 geom_vline(xintercept = 1, linetype="dotted") +
 geom_vline(xintercept = -1, linetype="dotted") +
 scale_y_continuous(limits=c(0,70))
+
+ggsave("LumA_DEG_MAGE.jpeg", plot = my_plot, width = 7, height = 5)
+my_plot
 
 ```
 
@@ -370,7 +373,7 @@ mage_genes <- res.gene[grepl("MAGE", res.gene$GeneSymbol), ]
 # Create the volcano plot for only MAGE genes
 library(ggplot2)
 library(ggrepel)
-ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
+my_plot <- ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
 geom_point(aes(col=diffexpressed)) +
 scale_color_manual(values = c("blue", "black", "red")) +
 theme_classic() +
@@ -380,6 +383,9 @@ theme(plot.title = element_text(hjust = 0.5, size = 13, face = "bold")) +
 geom_vline(xintercept = 1, linetype="dotted") +
 geom_vline(xintercept = -1, linetype="dotted") +
 scale_y_continuous(limits=c(0,70))
+
+ggsave("LumB_DEG_MAGE.jpeg", plot = my_plot, width = 7, height = 5)
+my_plot
 
 ```
 
@@ -480,7 +486,7 @@ mage_genes <- res.gene[grepl("MAGE", res.gene$GeneSymbol), ]
 # Create the volcano plot for only MAGE genes
 library(ggplot2)
 library(ggrepel)
-ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
+my_plot <- ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
 geom_point(aes(col=diffexpressed)) +
 scale_color_manual(values = c("black", "red")) +
 theme_classic() +
@@ -490,6 +496,9 @@ theme(plot.title = element_text(hjust = 0.5, size = 13, face = "bold")) +
 geom_vline(xintercept = 1, linetype="dotted") +
 geom_vline(xintercept = -1, linetype="dotted") +
 scale_y_continuous(limits=c(0,70))
+
+ggsave("Her2_DEG_MAGE.jpeg", plot = my_plot, width = 7, height = 5)
+my_plot
 ```
 
 ```{r}
@@ -592,12 +601,15 @@ mage_genes <- res.gene[grepl("MAGE", res.gene$GeneSymbol), ]
 # Create the volcano plot for only MAGE genes
 library(ggplot2)
 library(ggrepel)
-ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
+my_plot <- ggplot(mage_genes, aes(log2FoldChange, -log10(padj))) +
 geom_point(aes(col=Expression)) +
 scale_color_manual(values = c("blue","black","red")) +
 theme_classic() + geom_text_repel(aes(label=delabel),max.overlaps = 5) + labs(title="Volcano Plot for DEGs for IDCBasal Vs Normal") + theme(plot.title = element_text(hjust = 0.5, size = 13, face = "bold")) +
 geom_vline(xintercept = 1, linetype="dotted") +
 geom_vline(xintercept = -1, linetype="dotted")+scale_y_continuous(limits=c(0, 70))
+
+ggsave("Basal_DEG_MAGE.jpeg", plot = my_plot, width = 7, height = 5)
+my_plot
 
 ```
 
