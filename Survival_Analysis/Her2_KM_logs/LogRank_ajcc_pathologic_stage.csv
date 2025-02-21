@@ -1,0 +1,17 @@
+Call:
+survdiff(formula = as.formula(paste("surv_object ~", cat_var)), 
+    data = filtered_data)
+
+n=50, 2 observations deleted due to missingness.
+
+                                  N Observed Expected (O-E)^2/E (O-E)^2/V
+ajcc_pathologic_stage=Stage I     3        0    1.115     1.115     1.274
+ajcc_pathologic_stage=Stage IA    1        0    0.127     0.127     0.130
+ajcc_pathologic_stage=Stage IIA  22        4    6.059     0.700     1.770
+ajcc_pathologic_stage=Stage IIB   8        1    1.756     0.326     0.396
+ajcc_pathologic_stage=Stage IIIA  8        3    0.997     4.028     4.630
+ajcc_pathologic_stage=Stage IIIB  1        1    0.167     4.167     4.293
+ajcc_pathologic_stage=Stage IIIC  5        1    1.452     0.140     0.165
+ajcc_pathologic_stage=Stage IV    2        2    0.328     8.505     8.884
+
+ Chisq= 20.1  on 7 degrees of freedom, p= 0.005 

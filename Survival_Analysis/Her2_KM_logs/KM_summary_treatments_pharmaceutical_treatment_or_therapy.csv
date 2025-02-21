@@ -1,0 +1,38 @@
+Call: survfit(formula = as.formula(paste("surv_object ~", cat_var)), 
+    data = filtered_data)
+
+                treatments_pharmaceutical_treatment_or_therapy=no 
+ time n.risk n.event survival std.err lower 95% CI upper 95% CI
+    0      9       1    0.889   0.105       0.7056            1
+    1      3       1    0.667   0.208       0.3618            1
+    2      1       1    0.333   0.258       0.0733            1
+    3      1       0    0.333   0.258       0.0733            1
+
+                treatments_pharmaceutical_treatment_or_therapy=not reported 
+ time n.risk n.event survival std.err lower 95% CI upper 95% CI
+    0      7       0     1.00   0.000        1.000            1
+    1      3       1     0.75   0.217        0.426            1
+    2      3       0     0.75   0.217        0.426            1
+    3      3       0     0.75   0.217        0.426            1
+
+                treatments_pharmaceutical_treatment_or_therapy=yes 
+ time n.risk n.event survival std.err lower 95% CI upper 95% CI
+    0     36       0    1.000  0.0000        1.000            1
+    1     32       1    0.970  0.0298        0.913            1
+    2     20       1    0.926  0.0516        0.830            1
+    3     16       1    0.877  0.0681        0.753            1
+    4     13       0    0.877  0.0681        0.753            1
+    5      8       0    0.877  0.0681        0.753            1
+    6      7       0    0.877  0.0681        0.753            1
+    7      3       0    0.877  0.0681        0.753            1
+    8      2       0    0.877  0.0681        0.753            1
+    9      1       1    0.438  0.3119        0.109            1
+   10      1       0    0.438  0.3119        0.109            1
+   11      1       0    0.438  0.3119        0.109            1
+   12      1       0    0.438  0.3119        0.109            1
+   13      1       0    0.438  0.3119        0.109            1
+   14      1       0    0.438  0.3119        0.109            1
+   15      1       0    0.438  0.3119        0.109            1
+   16      1       0    0.438  0.3119        0.109            1
+   17      1       0    0.438  0.3119        0.109            1
+

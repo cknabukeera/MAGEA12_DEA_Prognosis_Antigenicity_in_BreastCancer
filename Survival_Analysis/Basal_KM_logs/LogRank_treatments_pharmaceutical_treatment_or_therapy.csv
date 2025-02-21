@@ -1,0 +1,18 @@
+Call:
+survdiff(formula = as.formula(paste("surv_object ~", cat_var)), 
+    data = filtered_data)
+
+                                                             N Observed
+treatments_pharmaceutical_treatment_or_therapy=no           17        2
+treatments_pharmaceutical_treatment_or_therapy=not reported 11        5
+treatments_pharmaceutical_treatment_or_therapy=yes          81        7
+                                                            Expected (O-E)^2/E
+treatments_pharmaceutical_treatment_or_therapy=no              1.175     0.578
+treatments_pharmaceutical_treatment_or_therapy=not reported    0.972    16.680
+treatments_pharmaceutical_treatment_or_therapy=yes            11.852     1.986
+                                                            (O-E)^2/V
+treatments_pharmaceutical_treatment_or_therapy=no               0.633
+treatments_pharmaceutical_treatment_or_therapy=not reported    17.947
+treatments_pharmaceutical_treatment_or_therapy=yes             12.984
+
+ Chisq= 19.3  on 2 degrees of freedom, p= 7e-05 

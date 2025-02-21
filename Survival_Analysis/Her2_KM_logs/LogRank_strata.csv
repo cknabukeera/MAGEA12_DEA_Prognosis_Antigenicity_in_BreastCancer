@@ -1,0 +1,9 @@
+Call:
+survdiff(formula = as.formula(paste("surv_object ~", cat_var)), 
+    data = filtered_data)
+
+             N Observed Expected (O-E)^2/E (O-E)^2/V
+strata=HIGH 32        6     6.64    0.0608     0.154
+strata=LOW  20        6     5.36    0.0752     0.154
+
+ Chisq= 0.2  on 1 degrees of freedom, p= 0.7 

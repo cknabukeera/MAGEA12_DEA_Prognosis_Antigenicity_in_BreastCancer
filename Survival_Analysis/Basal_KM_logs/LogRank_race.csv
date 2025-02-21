@@ -1,0 +1,11 @@
+Call:
+survdiff(formula = as.formula(paste("surv_object ~", cat_var)), 
+    data = filtered_data)
+
+                                N Observed Expected (O-E)^2/E (O-E)^2/V
+race=asian                      6        0    0.172     0.172     0.179
+race=black or african american 26        6    3.904     1.125     1.572
+race=not reported               6        0    0.355     0.355     0.371
+race=white                     71        8    9.570     0.257     0.825
+
+ Chisq= 1.9  on 3 degrees of freedom, p= 0.6 

@@ -1,0 +1,11 @@
+Call:
+survdiff(formula = as.formula(paste("surv_object ~", cat_var)), 
+    data = filtered_data)
+
+                    N Observed Expected (O-E)^2/E (O-E)^2/V
+age_group=2: 30-50 39        6    6.239   0.00914   0.01655
+age_group=3: 50-70 52        5    6.164   0.21984   0.39441
+age_group=4: 70-80  9        1    1.069   0.00442   0.00483
+age_group=5: >80    9        2    0.528   4.09852   4.30277
+
+ Chisq= 4.4  on 3 degrees of freedom, p= 0.2 
