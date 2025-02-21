@@ -1,0 +1,14 @@
+Call:
+survdiff(formula = as.formula(paste("surv_object ~", cat_var)), 
+    data = filtered_data)
+
+                                                         N Observed Expected
+treatments_radiation_treatment_or_therapy=no            79       10    10.38
+treatments_radiation_treatment_or_therapy=not reported  16       10     2.98
+treatments_radiation_treatment_or_therapy=yes          106       11    17.65
+                                                       (O-E)^2/E (O-E)^2/V
+treatments_radiation_treatment_or_therapy=no              0.0136    0.0208
+treatments_radiation_treatment_or_therapy=not reported   16.5636   18.5553
+treatments_radiation_treatment_or_therapy=yes             2.5032    5.8938
+
+ Chisq= 19.3  on 2 degrees of freedom, p= 6e-05 
