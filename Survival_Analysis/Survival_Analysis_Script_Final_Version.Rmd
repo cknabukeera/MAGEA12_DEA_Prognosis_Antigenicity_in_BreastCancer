@@ -1,0 +1,2069 @@
+---
+title: "MAGEA12 GENE EXPRESSION IMPACT ON OVERALL SURVIVAL OF IDC SUBTYPES(LumA, LumB,Basal and Her2 USING KAPLAN MEIER CURVES AND COX PROPORTIONAL HAZARDS MODELS.  ADDITIONALLY, THIS SCRIPT CONTAINS EXPLORATOTY DATA ANALYSIS "
+author: "KEVIN CISSY NABUKEERA"
+date: "12/DEC/2024"
+output:
+  pdf_document: default
+  html_document: default
+geometry: "margin=1.5in"
+fontsize: "11pt"
+---
+
+```{r}
+#Downloading clinical data for the TCGA_BRCA project
+library(TCGAbiolinks) # using this to obtain clinical data
+clinicalBRCA <- GDCquery_clinic("TCGA-BRCA")
+head(clinicalBRCA)
+write.csv(clinicalBRCA, "clinicalBRCA_TCGAdata.csv")
+```
+1098 entries are returned, corresponding to different samples
+
+```{r}
+# Loading the metadata to extract out the IDC sample barcodes and use these to filter the clinical data
+metadata <- read.csv("../R/metadata.csv")
+head(metadata)
+
+# Remove "." in the IDs in metadata to "-" to match the clinical data IDs format
+metadata$ID <- gsub("\\.", "-", metadata$ID)
+
+# Extract the first 12 characters of the metadata IDs
+metadata$short_id <- substr(metadata$ID, 1, 12)
+
+# Extract the first 12 characters of the submitter IDs in clinical data
+clinicalBRCA$short_submitter_id <- substr(clinicalBRCA$submitter_id, 1, 12)
+
+# Now filter the clinical data based on the matching IDs
+filtered_clinical_data <- clinicalBRCA[clinicalBRCA$short_submitter_id %in% metadata$short_id, ]
+
+# Merge the phenotype information from metadata into filtered_clinical_data based on short_id
+merged_clinical_data <- merge(filtered_clinical_data, metadata[, c("short_id", "Phenotype")], by.x = "short_submitter_id", by.y = "short_id", all.x = TRUE)
+
+# View the merged clinical data with phenotype
+head(merged_clinical_data)
+```
+
+
+
+```{r}
+#Making sure we have only IDC as the primary diagnosis
+# Filter rows where the primary_diagnosis contains "IDC"
+IDC_survivaldata <- merged_clinical_data[grep("Infiltrating duct carcinoma", merged_clinical_data$primary_diagnosis, ignore.case = TRUE), ]
+
+# View the filtered data
+head(IDC_survivaldata)
+write.csv(IDC_survivaldata, "../R/IDC_survivaldata.csv")
+```
+This returns 576 entries corresponding to the IDC(Infiltrating duct carcinoma)as the primary diagnosis
+
+SURVIVAL ANALYSIS
+
+```{r}
+#checking number of Alive and Dead patients
+table(IDC_survivaldata$vital_status)
+
+# Creating a status column
+IDC_survivaldata$deceased <- ifelse(IDC_survivaldata$vital_status == "Alive", FALSE, TRUE ) # assigning false to alive, and true to dead
+table(IDC_survivaldata$deceased) # viewing our created column in a table
+```
+464 patients are alive and 112 are dead
+
+```{r}
+#Finding survival time
+#This is the time from initial patient diagnosis to death/event/censoring
+
+#Creating survival column
+IDC_survivaldata$Overall_Survival <- ifelse(IDC_survivaldata$vital_status == "Alive",
+                                           IDC_survivaldata$days_to_last_follow_up,
+                                           IDC_survivaldata$days_to_death) #if patient is alive, use days to last followup, other use days to death for the dead patients
+
+#Converting survival time from days to years
+IDC_survivaldata$Overall_Survival_in_years <- IDC_survivaldata$Overall_Survival / 365.25
+#Converting survival time from days to years
+IDC_survivaldata$age_at_diagnosis <- IDC_survivaldata$age_at_diagnosis / 365.25
+
+# This creates a new column overall survival years in years
+
+#saving the IDCclinical data
+write.csv(IDC_survivaldata, file = "./IDC_survivaldata.csv", row.names = FALSE)
+head(IDC_survivaldata)
+```
+
+```{r}
+#Loading the normalized counts data
+#Loading the counts data for the IDC BRCA genes
+data <- read.csv("/etc/ace-data/home/cknabukeera/R/normalized_dds_counts.csv")
+#rownames(data) <- data$X #making the gene names rownames
+#data <- data[, -1]
+#head(data)
+# Remove decimal part from Ensembl IDs
+data$X <- gsub("\\..*", "", data$X)
+print(nrow(data)) #printing the number of rows in the dataset
+#This data contains 60483 genes and 614 samples
+head(data)
+ 
+```
+
+```{r}
+library(dplyr)
+#Loading the annotated dds
+dds_ann <- read.csv("../R/dds_annotated.csv")
+# Join the dataframes by ENSG_ID to add GeneSymbol to the expression_data
+head(dds_ann)
+#removing the dot in the ensemble ids
+# Remove decimal part from Ensembl IDs
+#data$X <- gsub("\\..*", "", data$X)
+
+merged_data <- merge(data, dds_ann[, c("X", "GeneSymbol")], by = "X", all.x = TRUE)
+# View the resulting dataframe with GeneSymbols added
+merged_data <- merged_data[, c("GeneSymbol", setdiff(names(merged_data), "GeneSymbol"))]
+
+#merged_data <- merged_data[, !names(merged_data) %in% "X"]
+head(merged_data)
+# Exclude non-numeric columns (e.g., GeneSymbol) before scaling
+numeric_data <- merged_data[, sapply(merged_data, is.numeric)]
+merged_data <- merged_data %>%
+  dplyr::select(-X) # Removes the column named 'X'
+head(merged_data)
+```
+
+```{r}
+#Checking for MAGEA genes
+library(dplyr)
+library(stringr)
+
+# Assuming your data is in a data.frame or tibble called 'data'
+filtered_data <- merged_data %>%
+  dplyr::filter(str_detect(GeneSymbol, "^MAGEA"))
+
+# View the filtered data
+filtered_data <- t(filtered_data)
+print(filtered_data)
+
+write.csv(filtered_data, "MAGEA_IDC_normalized_Anndata.csv", row.names = FALSE)
+```
+
+```{r}
+# CREATING A MERGED DATASET WITH THE DIFFERENTIALLY EXPRESSED GENES (MAGEA12, A3 and A6) FOR SURVIVAL ANALYSIS
+# Load required libraries
+library(tidyr)
+library(tibble)
+library(dplyr)
+
+# Convert Normalized data to a dataframe and reshape data
+Survdata <- merged_data %>%
+  gather(key = "sampleid", value = "counts", -GeneSymbol) # Reshape data
+# Remove extract digits from the sample IDs to match them with the clinical data
+Survdata$sampleid <- substr(Survdata$sampleid, 1, 12)
+# Calculate median values for each gene
+medians <- Survdata %>%
+  group_by(GeneSymbol) %>%
+  summarize(median_value = median(counts))
+
+# Classify expression based on median values
+Survdata <- Survdata %>%
+  left_join(medians, by = "GeneSymbol") %>%
+  mutate(strata = ifelse(counts >= median_value, "HIGH", "LOW"))
+# View the merged data
+head(Survdata)
+```
+
+
+```{r}
+# Keep only unique sample IDs
+Survdata <- Survdata %>% distinct(sampleid, GeneSymbol, .keep_all = TRUE)
+Survdata$sampleid <- gsub("\\.", "-", Survdata$sampleid)
+# Merge the expression data with the clinical data based on sample IDs
+Survdata <- merge(Survdata, IDC_survivaldata, by.x = "sampleid", by.y = "submitter_id")
+#write.csv(Survdata, "Survdata.csv")
+```
+
+
+```{r}
+#Checking for MAGEA genes
+library(dplyr)
+library(stringr)
+
+# Assuming your data is in a data.frame or tibble called 'data'
+MAGEA_Survdata <- Survdata %>%
+  dplyr::filter(str_detect(GeneSymbol, "^MAGEA12"))
+
+# View the filtered data
+print(MAGEA_Survdata)
+```
+
+```{r}
+#Creating sub groups for my data based on the BRCA subtypes.
+LumASurvdata <- Survdata %>% dplyr::filter(Phenotype == "IDCLumA")
+LumBSurvdata <- Survdata %>% dplyr::filter(Phenotype == "IDCLumB")
+BasalSurvdata <- Survdata %>% dplyr::filter(Phenotype == "IDCBasal")
+Her2Survdata <- Survdata %>% dplyr::filter(Phenotype == "IDCHer2")
+#write.csv(BasalSurvdata, "BasalSurvdata.csv")
+#write.csv(LumASurvdata, "LumASurvdata.csv")
+#write.csv(LumBSurvdata, "LumBSurvdata.csv")
+#write.csv(Her2Survdata, "Her2Survdata.csv")
+head(LumASurvdata)
+```
+
+KAPLAN-MEIER SURVIVAL CURVES Vs Cox hazarad models
+Kaplan-Meier survival Curves
+These are mainly for univariate analysis, and work well for categorical variables. Thus may not work well with quantitative/continuous  predictor variables like age, weight, gene expression. 
+
+Cox hazards models work well with quantitative and continuous variables and for categorical variables. Cox models can evaluate the impact of several risk factors/variables on survival time. Cox models are used to calculate the Hazards ratio (HR), a value >1 indicates that as the covariate increases, the event hazard increases and thus survival time decreases.  Thus this HR>1 indicates a covariate is greatly/positively with the event or death.
+HR = 1 = no effect
+HR > 1: Increase in Hazard, bad prognostic factor
+HR < 1: Reduction in Hazard, good prognostic factor
+LUMINAL A KAPLAN-MEIER SURVIVAL ANALYSIS
+```{r}
+# 1. LUMINAL A SUBTYPE DATASET SURVIVAL ANALYSIS
+
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+gene_data <- LumASurvdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+
+# Create age groups and encode them numerically
+gene_data$age_group <- cut(gene_data$age_at_diagnosis,
+                            breaks = c(-Inf, 30, 50, 70, 80, Inf), 
+                            labels = c("1: <30", "2: 30-50", "3: 50-70", "4: 70-80", "5: >80")) 
+
+# Convert age_group to factor for plotting
+gene_data$age_group <- as.factor(gene_data$age_group)
+
+# Categorical variables
+categorical_vars <- c("strata", "race", "treatments_pharmaceutical_treatment_or_therapy", 
+                      "treatments_radiation_treatment_or_therapy", "ajcc_pathologic_stage", "age_group")
+
+# Create directories to save plots and logs
+dir.create("LumA_KM_curves", showWarnings = FALSE)
+dir.create("LumA_KM_logs", showWarnings = FALSE)
+dir.create("LumA_Cox_logs", showWarnings = FALSE)
+
+# Initialize a list to store Kaplan-Meier fits
+km_fits <- list()
+
+# Loop through each categorical variable
+for (cat_var in categorical_vars) {
+  # Convert categorical variables to factors if not already
+  gene_data[[cat_var]] <- as.factor(gene_data[[cat_var]])
+
+  # Filter out rows with NA values in survival time and event
+  filtered_data <- gene_data %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+
+  # Create a survival object using the filtered dataset
+  surv_object <- Surv(time = filtered_data$Overall_Survival_in_years, event = filtered_data$deceased)
+
+  # Fit Kaplan-Meier model for the categorical variable
+  km_fit <- survfit(as.formula(paste("surv_object ~", cat_var)), data = filtered_data)
+
+  # Store the Kaplan-Meier fit
+  km_fits[[cat_var]] <- km_fit
+
+  # Print Kaplan-Meier summary to a file at uniform time intervals
+  km_summary <- summary(km_fit, times = seq(0, max(filtered_data$Overall_Survival_in_years, na.rm = TRUE), by = 1))
+  km_log_filename <- paste0("LumA_KM_logs/KM_summary_", cat_var, ".csv")
+  writeLines(capture.output(km_summary), km_log_filename)
+
+  # Perform log-rank test (Chi-Square test) and save it to a file
+  log_rank_test <- survdiff(as.formula(paste("surv_object ~", cat_var)), data = filtered_data)
+  log_rank_summary <- capture.output(log_rank_test)
+  log_rank_filename <- paste0("LumA_KM_logs/LogRank_", cat_var, ".csv")
+  writeLines(log_rank_summary, log_rank_filename)
+
+  # Optional: Print the Kaplan-Meier plot and save it
+  plot <- ggsurvplot(
+    km_fit, 
+    data = filtered_data, 
+    pval = TRUE, 
+    title = paste("LumA Kaplan-Meier Curve for", cat_var),
+    xlab = "Time in Years", 
+    ylab = "Survival Probability", 
+    risk.table = TRUE, risk.table.fontsize = 3.5,    # Adjust font size in the risk table
+  break.time.by = 5,           # Adjust time intervals for x-axis ticks
+  tables.theme = theme_cleantable(),  # Use a clean theme for the risk table 
+  conf.int = TRUE, conf.int.alpha = 0.1, ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9))
+  )
+
+  # Save the plot
+  ggsave(filename = paste0("LumA_KM_curves/KM_curve_", cat_var, ".png"), plot = plot$plot, width = 8, height = 6)
+
+  # Display the plot in the RStudio Plots pane
+  print(plot)
+}
+```
+
+COX PROPORTION HAZARDS MODELS
+
+MULTIVARIATE ANALYSIS
+```{r}
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA12 gene expression on overall survival
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+MAGEA12_Survdata <- LumASurvdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+# Filter out rows with NA values in survival time and event
+MAGEA12_Survdata <- MAGEA12_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA12 counts to MAGEA12 expression
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "counts")] <- "MAGEA12_expression"
+
+
+MAGEA12_Survdata$deceased <- as.numeric(MAGEA12_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA12_Survdata$race <- as.factor(MAGEA12_Survdata$race)
+MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA12_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA12_Survdata$Overall_Survival_in_years, event = MAGEA12_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA12_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA12_Survdata)
+summary(cox_model)
+cox_model
+
+
+```
+
+```{r}
+#plot the baseline survival function
+
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA12_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "LumA- Multi-Variate Analysis(MAGEA12 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+```
+
+
+```{r}
+ggforest(cox_model, data = MAGEA12_Survdata, main = "Hazard Ratios for Mutivariate LumA Cox model")
+
+```
+
+LUMINAL B KAPLAN-MEIER SURVIVAL ANALYSIS
+
+```{r}
+# 2. LUMINAL B SUBTYPE DATASET SURVIVAL ANALYSIS
+
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+gene_data <- LumBSurvdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+
+# Create age groups and encode them numerically
+gene_data$age_group <- cut(gene_data$age_at_diagnosis,
+                            breaks = c(-Inf, 30, 50, 70, 80, Inf), 
+                            labels = c("1: <30", "2: 30-50", "3: 50-70", "4: 70-80", "5: >80")) 
+
+# Convert age_group to factor for plotting
+gene_data$age_group <- as.factor(gene_data$age_group)
+
+# Categorical variables
+categorical_vars <- c("strata", "race", "treatments_pharmaceutical_treatment_or_therapy", 
+                      "treatments_radiation_treatment_or_therapy", "ajcc_pathologic_stage", "age_group")
+
+# Create directories to save plots and logs
+dir.create("LumB_KM_curves", showWarnings = FALSE)
+dir.create("LumB_KM_logs", showWarnings = FALSE)
+dir.create("LumB_Cox_logs", showWarnings = FALSE)
+
+# Initialize a list to store Kaplan-Meier fits
+km_fits <- list()
+
+# Loop through each categorical variable
+for (cat_var in categorical_vars) {
+  # Convert categorical variables to factors if not already
+  gene_data[[cat_var]] <- as.factor(gene_data[[cat_var]])
+
+  # Filter out rows with NA values in survival time and event
+  filtered_data <- gene_data %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+
+  # Create a survival object using the filtered dataset
+  surv_object <- Surv(time = filtered_data$Overall_Survival_in_years, event = filtered_data$deceased)
+
+  # Fit Kaplan-Meier model for the categorical variable
+  km_fit <- survfit(as.formula(paste("surv_object ~", cat_var)), data = filtered_data)
+
+  # Store the Kaplan-Meier fit
+  km_fits[[cat_var]] <- km_fit
+
+  # Print Kaplan-Meier summary to a file at uniform time intervals
+  km_summary <- summary(km_fit, times = seq(0, max(filtered_data$Overall_Survival_in_years, na.rm = TRUE), by = 1))
+  km_log_filename <- paste0("LumB_KM_logs/KM_summary_", cat_var, ".csv")
+  writeLines(capture.output(km_summary), km_log_filename)
+
+  # Perform log-rank test (Chi-Square test) and save it to a file
+  log_rank_test <- survdiff(as.formula(paste("surv_object ~", cat_var)), data = filtered_data)
+  log_rank_summary <- capture.output(log_rank_test)
+  log_rank_filename <- paste0("LumB_KM_logs/LogRank_", cat_var, ".csv")
+  writeLines(log_rank_summary, log_rank_filename)
+
+  # Optional: Print the Kaplan-Meier plot and save it
+  plot <- ggsurvplot(
+    km_fit, 
+    data = filtered_data, 
+    pval = TRUE, 
+    title = paste("LumB Kaplan-Meier Curve for", cat_var),
+    xlab = "Time in Years", 
+    ylab = "Survival Probability", 
+    risk.table = TRUE, risk.table.fontsize = 3.5,    # Adjust font size in the risk table
+  break.time.by = 5,           # Adjust time intervals for x-axis ticks
+  tables.theme = theme_cleantable(),  # Use a clean theme for the risk table 
+  conf.int = TRUE, conf.int.alpha = 0.1, ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9))
+  )
+
+  # Save the plot
+  ggsave(filename = paste0("LumB_KM_curves/KM_curve_", cat_var, ".png"), plot = plot$plot, width = 8, height = 6)
+
+  # Display the plot in the RStudio Plots pane
+  print(plot)
+}
+```
+
+COX PROPORTIONAL HAZARDS MODELS
+
+MULTIVARIATE ANALYSIS
+```{r}
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA12 gene expression on overall survival
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+MAGEA12_Survdata <- LumBSurvdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+# Filter out rows with NA values in survival time and event
+MAGEA12_Survdata <- MAGEA12_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA12 counts to MAGEA12 expression
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "counts")] <- "MAGEA12_expression"
+
+MAGEA12_Survdata$deceased <- as.numeric(MAGEA12_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA12_Survdata$race <- as.factor(MAGEA12_Survdata$race)
+MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA12_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA12_Survdata$Overall_Survival_in_years, event = MAGEA12_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA12_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA12_Survdata)
+summary(cox_model)
+cox_model
+
+```
+
+```{r}
+#plot the baseline survival function
+
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA12_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "LumB - Multi-Variate Analysis(MAGEA12 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+#plotting the hazard ratios
+ggforest(cox_model, data = MAGEA12_Survdata, main = "Hazard Ratios for Mutivariate LumB Cox model")
+
+```
+
+
+BASAL KAPLAN-MEIER SURVIVAL ANALYSIS
+
+
+```{r}
+# 3. BASAL SUBTYPE DATASET SURVIVAL ANALYSIS
+
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+gene_data <- BasalSurvdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+
+# Create age groups and encode them numerically
+gene_data$age_group <- cut(gene_data$age_at_diagnosis,
+                            breaks = c(-Inf, 30, 50, 70, 80, Inf), 
+                            labels = c("1: <30", "2: 30-50", "3: 50-70", "4: 70-80", "5: >80")) 
+
+# Convert age_group to factor for plotting
+gene_data$age_group <- as.factor(gene_data$age_group)
+
+# Categorical variables
+categorical_vars <- c("strata", "race", "treatments_pharmaceutical_treatment_or_therapy", 
+                      "treatments_radiation_treatment_or_therapy", "ajcc_pathologic_stage", "age_group")
+
+# Create directories to save plots and logs
+dir.create("Basal_KM_curves", showWarnings = FALSE)
+dir.create("Basal_KM_logs", showWarnings = FALSE)
+dir.create("Basal_Cox_logs", showWarnings = FALSE)
+
+# Initialize a list to store Kaplan-Meier fits
+km_fits <- list()
+
+# Loop through each categorical variable
+for (cat_var in categorical_vars) {
+  # Convert categorical variables to factors if not already
+  gene_data[[cat_var]] <- as.factor(gene_data[[cat_var]])
+
+  # Filter out rows with NA values in survival time and event
+  filtered_data <- gene_data %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+
+  # Create a survival object using the filtered dataset
+  surv_object <- Surv(time = filtered_data$Overall_Survival_in_years, event = filtered_data$deceased)
+
+  # Fit Kaplan-Meier model for the categorical variable
+  km_fit <- survfit(as.formula(paste("surv_object ~", cat_var)), data = filtered_data)
+
+  # Store the Kaplan-Meier fit
+  km_fits[[cat_var]] <- km_fit
+
+  # Print Kaplan-Meier summary to a file at uniform time intervals
+  km_summary <- summary(km_fit, times = seq(0, max(filtered_data$Overall_Survival_in_years, na.rm = TRUE), by = 1))
+  km_log_filename <- paste0("Basal_KM_logs/KM_summary_", cat_var, ".csv")
+  writeLines(capture.output(km_summary), km_log_filename)
+
+  # Perform log-rank test (Chi-Square test) and save it to a file
+  log_rank_test <- survdiff(as.formula(paste("surv_object ~", cat_var)), data = filtered_data)
+  log_rank_summary <- capture.output(log_rank_test)
+  log_rank_filename <- paste0("Basal_KM_logs/LogRank_", cat_var, ".csv")
+  writeLines(log_rank_summary, log_rank_filename)
+
+  # Optional: Print the Kaplan-Meier plot and save it
+  plot <- ggsurvplot(
+    km_fit, 
+    data = filtered_data, 
+    pval = TRUE, 
+    title = paste("Kaplan-Meier Curve for", cat_var),
+    xlab = "Time in Years", 
+    ylab = "Survival Probability", 
+    risk.table = TRUE, risk.table.fontsize = 3.5,    # Adjust font size in the risk table
+  break.time.by = 5,           # Adjust time intervals for x-axis ticks
+  tables.theme = theme_cleantable(),  # Use a clean theme for the risk table 
+  conf.int = TRUE, conf.int.alpha = 0.1, ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9))
+  )
+
+  # Save the plot
+  ggsave(filename = paste0("Basal_KM_curves/KM_curve_", cat_var, ".png"), plot = plot$plot, width = 8, height = 6)
+
+  # Display the plot in the RStudio Plots pane
+  print(plot)
+}
+```
+
+
+
+COX PROPORTIONAL HAZARDS MODELS
+MULTIVARIATE ANALYIS
+```{r}
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA12 gene expression on overall survival
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+MAGEA12_Survdata <- BasalSurvdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+# Filter out rows with NA values in survival time and event
+MAGEA12_Survdata <- MAGEA12_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA12 counts to MAGEA12 expression
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "counts")] <- "MAGEA12_expression"
+
+MAGEA12_Survdata$deceased <- as.numeric(MAGEA12_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA12_Survdata$race <- as.factor(MAGEA12_Survdata$race)
+MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA12_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA12_Survdata$Overall_Survival_in_years, event = MAGEA12_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA12_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA12_Survdata)
+summary(cox_model)
+cox_model
+
+#plot the baseline survival function
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA12_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "Basal - Multi-Variate Analysis(MAGEA12 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+#plotting the hazard ratios
+ggforest(cox_model, data = MAGEA12_Survdata, main = "Hazard Ratios for Mutivariate Basal Cox model")
+
+```
+
+HER2 KAPLAN-MEIER SURVIVAL ANALYSIS
+
+```{r}
+# 4. Her2 SUBTYPE DATASET SURVIVAL ANALYSIS
+
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+gene_data <- Her2Survdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+
+# Create age groups and encode them numerically
+gene_data$age_group <- cut(gene_data$age_at_diagnosis,
+                            breaks = c(-Inf, 30, 50, 70, 80, Inf), 
+                            labels = c("1: <30", "2: 30-50", "3: 50-70", "4: 70-80", "5: >80")) 
+
+# Convert age_group to factor for plotting
+gene_data$age_group <- as.factor(gene_data$age_group)
+
+# Categorical variables
+categorical_vars <- c("strata", "race", "treatments_pharmaceutical_treatment_or_therapy", 
+                      "treatments_radiation_treatment_or_therapy", "ajcc_pathologic_stage", "age_group")
+
+# Create directories to save plots and logs
+dir.create("Her2_KM_curves", showWarnings = FALSE)
+dir.create("Her2_KM_logs", showWarnings = FALSE)
+dir.create("Her2_Cox_logs", showWarnings = FALSE)
+
+# Initialize a list to store Kaplan-Meier fits
+km_fits <- list()
+
+# Loop through each categorical variable
+for (cat_var in categorical_vars) {
+  # Convert categorical variables to factors if not already
+  gene_data[[cat_var]] <- as.factor(gene_data[[cat_var]])
+
+  # Filter out rows with NA values in survival time and event
+  filtered_data <- gene_data %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+
+  # Create a survival object using the filtered dataset
+  surv_object <- Surv(time = filtered_data$Overall_Survival_in_years, event = filtered_data$deceased)
+
+  # Fit Kaplan-Meier model for the categorical variable
+  km_fit <- survfit(as.formula(paste("surv_object ~", cat_var)), data = filtered_data)
+
+  # Store the Kaplan-Meier fit
+  km_fits[[cat_var]] <- km_fit
+
+  # Print Kaplan-Meier summary to a file at uniform time intervals
+  km_summary <- summary(km_fit, times = seq(0, max(filtered_data$Overall_Survival_in_years, na.rm = TRUE), by = 1))
+  km_log_filename <- paste0("Her2_KM_logs/KM_summary_", cat_var, ".csv")
+  writeLines(capture.output(km_summary), km_log_filename)
+
+  # Perform log-rank test (Chi-Square test) and save it to a file
+  log_rank_test <- survdiff(as.formula(paste("surv_object ~", cat_var)), data = filtered_data)
+  log_rank_summary <- capture.output(log_rank_test)
+  log_rank_filename <- paste0("Her2_KM_logs/LogRank_", cat_var, ".csv")
+  writeLines(log_rank_summary, log_rank_filename)
+
+  # Optional: Print the Kaplan-Meier plot and save it
+  plot <- ggsurvplot(
+    km_fit, 
+    data = filtered_data, 
+    pval = TRUE, 
+    title = paste("Her2 Kaplan-Meier Curve for", cat_var),
+    xlab = "Time in Years", 
+    ylab = "Survival Probability", 
+    risk.table = TRUE, risk.table.fontsize = 3.5,    # Adjust font size in the risk table
+  break.time.by = 5,           # Adjust time intervals for x-axis ticks
+  tables.theme = theme_cleantable(),  # Use a clean theme for the risk table 
+  conf.int = TRUE, conf.int.alpha = 0.1, ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9))
+  )
+
+  # Save the plot
+  ggsave(filename = paste0("Her2_KM_curves/KM_curve_", cat_var, ".png"), plot = plot$plot, width = 8, height = 6)
+
+  # Display the plot in the RStudio Plots pane
+  print(plot)
+}
+```
+MAGEA12
+
+COX PROPORTION HAZARDS MODELS
+
+MULTIVARIATE ANALYSIS
+```{r}
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA12 gene expression on overall survival
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+MAGEA12_Survdata <- Her2Survdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+# Filter out rows with NA values in survival time and event
+MAGEA12_Survdata <- MAGEA12_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA12 counts to MAGEA12 expression
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "counts")] <- "MAGEA12_expression"
+
+MAGEA12_Survdata$deceased <- as.numeric(MAGEA12_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA12_Survdata$race <- as.factor(MAGEA12_Survdata$race)
+MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA12_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA12_Survdata$Overall_Survival_in_years, event = MAGEA12_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA12_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA12_Survdata)
+summary(cox_model)
+cox_model
+
+#plot the baseline survival function
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA12_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "HER2 - Multi-Variate Analysis(MAGEA12 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+  )
+#plotting the hazard ratios
+ggforest(cox_model, data = MAGEA12_Survdata, main = "Hazard Ratios for Mutivariate Her2 Cox model")
+```
+
+UNIVARIATE MAGEA12 EXPRESSION EFFECT ON SURVIVAL
+
+LUMINAL A
+```{r}
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA12 gene expression on overall survival
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+MAGEA12_Survdata <- LumASurvdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+# Filter out rows with NA values in survival time and event
+MAGEA12_Survdata <- MAGEA12_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA12 counts to MAGEA12 expression
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "counts")] <- "MAGEA12_expression"
+
+MAGEA12_Survdata$deceased <- as.numeric(MAGEA12_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA12_Survdata$race <- as.factor(MAGEA12_Survdata$race)
+MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA12_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA12_Survdata$Overall_Survival_in_years, event = MAGEA12_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA12_expression, data = MAGEA12_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA12_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "LumA MAGEA12 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+```
+ 
+LUMINAL B
+
+```{r}
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA12 gene expression on overall survival
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+MAGEA12_Survdata <- LumBSurvdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+# Filter out rows with NA values in survival time and event
+MAGEA12_Survdata <- MAGEA12_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA12 counts to MAGEA12 expression
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "counts")] <- "MAGEA12_expression"
+
+MAGEA12_Survdata$deceased <- as.numeric(MAGEA12_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA12_Survdata$race <- as.factor(MAGEA12_Survdata$race)
+MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA12_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA12_Survdata$Overall_Survival_in_years, event = MAGEA12_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA12_expression, data = MAGEA12_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA12_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "LumB MAGEA12 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+```
+
+BASAL 
+```{r}
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA12 gene expression on overall survival
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+MAGEA12_Survdata <- BasalSurvdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+# Filter out rows with NA values in survival time and event
+MAGEA12_Survdata <- MAGEA12_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA12 counts to MAGEA12 expression
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "counts")] <- "MAGEA12_expression"
+
+MAGEA12_Survdata$deceased <- as.numeric(MAGEA12_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA12_Survdata$race <- as.factor(MAGEA12_Survdata$race)
+MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA12_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA12_Survdata$Overall_Survival_in_years, event = MAGEA12_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA12_expression, data = MAGEA12_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA12_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "Basal MAGEA12 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+```
+
+HER2 
+
+```{r}
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA12 gene expression on overall survival
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+MAGEA12_Survdata <- Her2Survdata %>% dplyr::filter(GeneSymbol == "MAGEA12")
+# Filter out rows with NA values in survival time and event
+MAGEA12_Survdata <- MAGEA12_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA12 counts to MAGEA12 expression
+colnames(MAGEA12_Survdata)[which(colnames(MAGEA12_Survdata) == "counts")] <- "MAGEA12_expression"
+
+MAGEA12_Survdata$deceased <- as.numeric(MAGEA12_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA12_Survdata$race <- as.factor(MAGEA12_Survdata$race)
+MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA12_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA12_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA12_Survdata$Overall_Survival_in_years, event = MAGEA12_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA12_expression, data = MAGEA12_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA12_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "Her2 MAGEA12 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+```
+REPEATING THESE FOR THE OTHER MAGEA GENES
+MAGEA3
+
+Multi-variate Analysis
+
+```{r}
+#HER2
+
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA3 gene expression on overall survival
+# Filtering only data for MAGEA3 gene
+# Filter data for the current gene
+MAGEA3_Survdata <- Her2Survdata %>% dplyr::filter(GeneSymbol == "MAGEA3")
+# Filter out rows with NA values in survival time and event
+MAGEA3_Survdata <- MAGEA3_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA3 counts to MAGEA3 expression
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "counts")] <- "MAGEA3_expression"
+
+MAGEA3_Survdata$deceased <- as.numeric(MAGEA3_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA3_Survdata$race <- as.factor(MAGEA3_Survdata$race)
+MAGEA3_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA3_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA3_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA3_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA3_Survdata$Overall_Survival_in_years, event = MAGEA3_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA3_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA3_Survdata)
+summary(cox_model)
+cox_model
+
+#plot the baseline survival function
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA3_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "HER2 - Multi-Variate Analysis(MAGEA3 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+  )
+#plotting the hazard ratios
+ggforest(cox_model, data = MAGEA3_Survdata, main = "Hazard Ratios for Mutivariate Her2 Cox model")
+
+#Univariate Analysis
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA3_Survdata$Overall_Survival_in_years, event = MAGEA3_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA3_expression, data = MAGEA3_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA3_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "Her2 MAGEA3 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+#LumA
+
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA3 gene expression on overall survival
+# Filtering only data for MAGEA3 gene
+# Filter data for the current gene
+MAGEA3_Survdata <- LumASurvdata %>% dplyr::filter(GeneSymbol == "MAGEA3")
+# Filter out rows with NA values in survival time and event
+MAGEA3_Survdata <- MAGEA3_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA3 counts to MAGEA3 expression
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "counts")] <- "MAGEA3_expression"
+
+MAGEA3_Survdata$deceased <- as.numeric(MAGEA3_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA3_Survdata$race <- as.factor(MAGEA3_Survdata$race)
+MAGEA3_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA3_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA3_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA3_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA3_Survdata$Overall_Survival_in_years, event = MAGEA3_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA3_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA3_Survdata)
+summary(cox_model)
+cox_model
+
+#plot the baseline survival function
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA3_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "LumA - Multi-Variate Analysis(MAGEA3 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+  )
+#plotting the hazard ratios
+ggforest(cox_model, data = MAGEA3_Survdata, main = "Hazard Ratios for Mutivariate LumA Cox model")
+
+#Univariate Analysis
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA3_Survdata$Overall_Survival_in_years, event = MAGEA3_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA3_expression, data = MAGEA3_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA3_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "LumA MAGEA3 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+#LumB
+
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA3 gene expression on overall survival
+# Filtering only data for MAGEA3 gene
+# Filter data for the current gene
+MAGEA3_Survdata <- LumBSurvdata %>% dplyr::filter(GeneSymbol == "MAGEA3")
+# Filter out rows with NA values in survival time and event
+MAGEA3_Survdata <- MAGEA3_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA3 counts to MAGEA3 expression
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "counts")] <- "MAGEA3_expression"
+
+MAGEA3_Survdata$deceased <- as.numeric(MAGEA3_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA3_Survdata$race <- as.factor(MAGEA3_Survdata$race)
+MAGEA3_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA3_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA3_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA3_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA3_Survdata$Overall_Survival_in_years, event = MAGEA3_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA3_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA3_Survdata)
+summary(cox_model)
+cox_model
+
+#plot the baseline survival function
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA3_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "LumB - Multi-Variate Analysis(MAGEA3 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+  )
+#plotting the hazard ratios
+ggforest(cox_model, data = MAGEA3_Survdata, main = "Hazard Ratios for Mutivariate LumB Cox model")
+
+#Univariate Analysis
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA3_Survdata$Overall_Survival_in_years, event = MAGEA3_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA3_expression, data = MAGEA3_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA3_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "LumB MAGEA3 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+
+#BASAL
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA3 gene expression on overall survival
+# Filtering only data for MAGEA3 gene
+# Filter data for the current gene
+MAGEA3_Survdata <- BasalSurvdata %>% dplyr::filter(GeneSymbol == "MAGEA3")
+# Filter out rows with NA values in survival time and event
+MAGEA3_Survdata <- MAGEA3_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA3 counts to MAGEA3 expression
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "counts")] <- "MAGEA3_expression"
+
+MAGEA3_Survdata$deceased <- as.numeric(MAGEA3_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA3_Survdata$race <- as.factor(MAGEA3_Survdata$race)
+MAGEA3_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA3_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA3_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA3_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA3_Survdata)[which(colnames(MAGEA3_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA3_Survdata$Overall_Survival_in_years, event = MAGEA3_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA3_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA3_Survdata)
+summary(cox_model)
+cox_model
+
+#plot the baseline survival function
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA3_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "Basal - Multi-Variate Analysis(MAGEA3 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+  )
+#plotting the hazard ratios
+ggforest(cox_model, data = MAGEA3_Survdata, main = "Hazard Ratios for Mutivariate Basal Cox model")
+#Univariate Analysis
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA3_Survdata$Overall_Survival_in_years, event = MAGEA3_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA3_expression, data = MAGEA3_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA3_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "Basal MAGEA3 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+
+```
+
+MAGEA6
+
+```{r}
+#HER2
+
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA6 gene expression on overall survival
+# Filtering only data for MAGEA6 gene
+# Filter data for the current gene
+MAGEA6_Survdata <- Her2Survdata %>% dplyr::filter(GeneSymbol == "MAGEA6")
+# Filter out rows with NA values in survival time and event
+MAGEA6_Survdata <- MAGEA6_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA6 counts to MAGEA6 expression
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "counts")] <- "MAGEA6_expression"
+
+MAGEA6_Survdata$deceased <- as.numeric(MAGEA6_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA6_Survdata$race <- as.factor(MAGEA6_Survdata$race)
+MAGEA6_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA6_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA6_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA6_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA6_Survdata$Overall_Survival_in_years, event = MAGEA6_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA6_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA6_Survdata)
+summary(cox_model)
+cox_model
+
+#plot the baseline survival function
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA6_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "HER2 - Multi-Variate Analysis(MAGEA6 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+  )
+#plotting the hazard ratios
+ggforest(cox_model, data = MAGEA6_Survdata, main = "Hazard Ratios for Mutivariate Her2 Cox model")
+
+#Univariate Analysis
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA6_Survdata$Overall_Survival_in_years, event = MAGEA6_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA6_expression, data = MAGEA6_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA6_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "Her2 MAGEA6 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+#LumA
+
+
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA6 gene expression on overall survival
+# Filtering only data for MAGEA6 gene
+# Filter data for the current gene
+MAGEA6_Survdata <- LumASurvdata %>% dplyr::filter(GeneSymbol == "MAGEA6")
+# Filter out rows with NA values in survival time and event
+MAGEA6_Survdata <- MAGEA6_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA6 counts to MAGEA6 expression
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "counts")] <- "MAGEA6_expression"
+
+MAGEA6_Survdata$deceased <- as.numeric(MAGEA6_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA6_Survdata$race <- as.factor(MAGEA6_Survdata$race)
+MAGEA6_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA6_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA6_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA6_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA6_Survdata$Overall_Survival_in_years, event = MAGEA6_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA6_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA6_Survdata)
+summary(cox_model)
+cox_model
+
+#plot the baseline survival function
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA6_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "LumA - Multi-Variate Analysis(MAGEA6 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+  )
+#plotting the hazard ratios
+ggforest(cox_model, data = MAGEA6_Survdata, main = "Hazard Ratios for Mutivariate LumA Cox model")
+
+#Univariate Analysis
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA6_Survdata$Overall_Survival_in_years, event = MAGEA6_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA6_expression, data = MAGEA6_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA6_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "LumA MAGEA6 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+#LumB
+
+
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA6 gene expression on overall survival
+# Filtering only data for MAGEA6 gene
+# Filter data for the current gene
+MAGEA6_Survdata <- LumBSurvdata %>% dplyr::filter(GeneSymbol == "MAGEA6")
+# Filter out rows with NA values in survival time and event
+MAGEA6_Survdata <- MAGEA6_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA6 counts to MAGEA6 expression
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "counts")] <- "MAGEA6_expression"
+
+MAGEA6_Survdata$deceased <- as.numeric(MAGEA6_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA6_Survdata$race <- as.factor(MAGEA6_Survdata$race)
+MAGEA6_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA6_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA6_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA6_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA6_Survdata$Overall_Survival_in_years, event = MAGEA6_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA6_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA6_Survdata)
+summary(cox_model)
+cox_model
+
+#plot the baseline survival function
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA6_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "LumB - Multi-Variate Analysis(MAGEA6 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+  )
+#plotting the hazard ratios
+ggforest(cox_model, data = MAGEA6_Survdata, main = "Hazard Ratios for Mutivariate LumB Cox model")
+
+#Univariate Analysis
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA6_Survdata$Overall_Survival_in_years, event = MAGEA6_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA6_expression, data = MAGEA6_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA6_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "LumB MAGEA6 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+#Basal
+
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA6 gene expression on overall survival
+# Filtering only data for MAGEA6 gene
+# Filter data for the current gene
+MAGEA6_Survdata <- BasalSurvdata %>% dplyr::filter(GeneSymbol == "MAGEA6")
+# Filter out rows with NA values in survival time and event
+MAGEA6_Survdata <- MAGEA6_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+#Renaming the MAGEA6 counts to MAGEA6 expression
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "counts")] <- "MAGEA6_expression"
+
+MAGEA6_Survdata$deceased <- as.numeric(MAGEA6_Survdata$deceased)
+
+#Adding levels to the categorical covariates
+MAGEA6_Survdata$race <- as.factor(MAGEA6_Survdata$race)
+MAGEA6_Survdata$treatments_pharmaceutical_treatment_or_therapy <- as.factor(MAGEA6_Survdata$treatments_pharmaceutical_treatment_or_therapy)
+MAGEA6_Survdata$treatments_radiation_treatment_or_therapy <- as.factor(MAGEA6_Survdata$treatments_radiation_treatment_or_therapy)
+
+#Renaming the treatments_pharmaceutical_treatment_or_therapy, name is so long for the graphs
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "treatments_pharmaceutical_treatment_or_therapy")] <- "Pharmaceutical_therapy"
+colnames(MAGEA6_Survdata)[which(colnames(MAGEA6_Survdata) == "treatments_radiation_treatment_or_therapy")] <- "Radiation_therapy"
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA6_Survdata$Overall_Survival_in_years, event = MAGEA6_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA6_expression + age_at_diagnosis + Radiation_therapy + Pharmaceutical_therapy, data = MAGEA6_Survdata)
+summary(cox_model)
+cox_model
+
+#plot the baseline survival function
+ggsurvplot(survfit(cox_model), color = "#2E9FDF", ggtheme = theme_minimal() + theme(plot.title = element_text(size = 9)), data = MAGEA6_Survdata, conf.int = TRUE, conf.int.alpha = 0.1, risk.table = TRUE, title = "Basal - Multi-Variate Analysis(MAGEA6 expression + Age + pharmaceutical and Radiation treatments",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+    legend.title = "All covariates",
+  surv.median.line = "hv"                      # Add median survival lines
+  )
+#plotting the hazard ratios
+ggforest(cox_model, data = MAGEA6_Survdata, main = "Hazard Ratios for Mutivariate Basal Cox model")
+
+#Univariate Analysis
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA6_Survdata$Overall_Survival_in_years, event = MAGEA6_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA6_expression, data = MAGEA6_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA6_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "Basal MAGEA6 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+
+
+
+```
+
+ 
+PERFORMING A MULTI-VARIATE ANALYSIS FOR MAGEA12, MAGEA3 AND MAGEA6
+
+```{r}
+#LumB
+#Fitting for Cox proportional regression models
+#Survival Analysis
+# Load necessary libraries
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+#Checking for the effect of MAGEA12 gene expression on overall survival
+# Filtering only data for MAGEA12 gene
+# Filter data for the current gene
+MAGEA_Survdata <- LumASurvdata %>% 
+  dplyr::filter(GeneSymbol %in% c("MAGEA12", "MAGEA3", "MAGEA6"))
+
+# Filter out rows with NA values in survival time and event
+MAGEA_Survdata <- MAGEA_Survdata %>%
+    dplyr::filter(!is.na(Overall_Survival_in_years) & !is.na(deceased))
+# Transform the data
+MAGEA_Survdata <- MAGEA_Survdata %>%
+  pivot_wider(
+    names_from = GeneSymbol,  # Use GeneSymbol values as column names
+    values_from = counts      # Fill the new columns with counts
+  ) %>%
+  mutate(across(c(MAGEA3, MAGEA6, MAGEA12), ~ replace_na(., 0))) %>% # Replace NAs with 0
+  relocate(MAGEA3, MAGEA6, MAGEA12, .after = sampleid)  # Move new columns after sampleid
+
+MAGEA_Survdata$deceased <- as.numeric(MAGEA_Survdata$deceased)
+
+
+#Fitting a cox proprotional regression model
+#creating a surv object
+surv_object <- Surv(time = MAGEA_Survdata$Overall_Survival_in_years, event = MAGEA_Survdata$deceased)
+
+cox_model <- coxph(surv_object ~ MAGEA12 + MAGEA3 + MAGEA6, data = MAGEA_Survdata)
+summary_cox <- summary(cox_model)
+#cox_model
+
+p_value <- signif(summary_cox$coefficients[5], digits = 3)
+hazard_ratio <- signif(exp(summary_cox$coefficients[1]), digits = 3)
+
+# Generate survival plot
+# Generate survival plot
+surv_plot <- ggsurvplot(
+  survfit(cox_model),
+  data = MAGEA_Survdata,
+  pval = paste0("p = ", p_value),              # Add p-value to the plot
+  risk.table = TRUE,                           # Include risk table
+  conf.int = TRUE,                             # Include confidence intervals
+  ggtheme = theme_minimal(),                   # Use a minimal theme
+  title = "Survival Plot with Cox Model",
+  xlab = "Time (years)",
+  ylab = "Survival Probability",
+  legend.title = "LumB MAGEA 12 + 3 + 6 Expression",
+  surv.median.line = "hv"                      # Add median survival lines
+)
+
+# Add HR annotation
+surv_plot$plot <- surv_plot$plot +
+  annotate("text", x = 2, y = 0.3,                   # Adjust positions as needed
+           label = paste("HR =", hazard_ratio), 
+           color = "red", size = 4)
+
+
+# Display the plot
+print(surv_plot)
+
+```
+
+
+EXPLORATORY DATA ANALYSIS
+Plotting Phenotype occurrences
+
+```{r}
+#head(Survdata)
+
+#plotting occurrences of each subtype.
+# Count the occurrences of each phenotype
+phenotype_count <- Survdata %>%
+  group_by(Phenotype) %>%
+  summarise(Count = n())
+
+# Plot the occurrences
+ggplot(phenotype_count, aes(x = Phenotype, y = Count, fill = Phenotype)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Occurrences of Each Phenotype", x = "Phenotype", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) # Rotate x-axis labels for readability
+
+```
+
+
+```{r}
+# Count the unique occurrences of each phenotype based on unique sample IDs
+phenotype_count_unique <- IDC_survivaldata %>%
+  distinct(submitter_id, Phenotype) %>%  # Remove duplicates based on sample ID and phenotype
+  group_by(Phenotype) %>%
+  summarise(Unique_Count = n())  # Count the unique occurrences of each phenotype
+
+# Iterate through the table and print the sum count of each phenotype based on unique sample IDs
+for(i in 1:nrow(phenotype_count_unique)) {
+  phenotype <- phenotype_count_unique$Phenotype[i]
+  count <- phenotype_count_unique$Unique_Count[i]
+  print(paste(phenotype, count))
+}
+
+# Create a bar plot using ggplot and add numbers on top of the bars
+plot <- ggplot(phenotype_count_unique, aes(x = Phenotype, y = Unique_Count, fill = Phenotype)) +
+  geom_bar(stat = "identity", color = "black") +
+  geom_text(aes(label = Unique_Count), vjust = -0.5, size = 4) +  # Add numbers on top of bars
+  theme_minimal() +
+  labs(
+    title = "Unique Occurrences of Phenotypes Based on Sample IDs",
+    x = "Phenotype",
+    y = "Count"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+
+# Save the plot as PDF and PNG
+ggsave("Phenotype_Occurrences.pdf", plot = plot, width = 8, height = 6)
+ggsave("Phenotype_Occurrences.png", plot = plot, width = 8, height = 6, dpi = 300)
+
+# Display the plot
+print(plot)
+
+```
+```{r}
+library(dplyr)
+
+# Summarize and count unique individuals for each variable
+summary_counts <- list(
+  race = IDC_survivaldata %>%
+    distinct(submitter_id, race) %>%  # Remove duplicates based on sample ID and race
+    group_by(race) %>%
+    summarise(Unique_Count = n(), .groups = "drop"),
+  
+  ethnicity = IDC_survivaldata %>%
+    distinct(submitter_id, ethnicity) %>%  # Remove duplicates based on sample ID and ethnicity
+    group_by(ethnicity) %>%
+    summarise(Unique_Count = n(), .groups = "drop"),
+  
+  ajcc_pathologic_stage = IDC_survivaldata %>%
+    distinct(submitter_id, ajcc_pathologic_stage) %>%  # Remove duplicates based on sample ID and stage
+    group_by(ajcc_pathologic_stage) %>%
+    summarise(Unique_Count = n(), .groups = "drop")
+)
+
+# Print summaries for each variable
+print(summary_counts$race)
+print(summary_counts$ethnicity)
+print(summary_counts$ajcc_pathologic_stage)
+
+
+# Save each summary as a CSV file
+write.csv(summary_counts$race, "race_summary.csv", row.names = FALSE)
+write.csv(summary_counts$ethnicity, "ethnicity_summary.csv", row.names = FALSE)
+write.csv(summary_counts$ajcc_pathologic_stage, "pathologic_stage_summary.csv", row.names = FALSE)
+
+# Print message to confirm saving
+cat("Summaries saved as CSV files: race_summary.csv, ethnicity_summary.csv, and pathologic_stage_summary.csv\n")
+
+```
+
+```{r}
+library(dplyr)
+
+# Summarize and count total individuals for each variable
+summary_counts <- list(
+  race = IDC_survivaldata %>%
+    group_by(race) %>%
+    summarise(Count = n(), .groups = "drop"),
+  
+  ethnicity = IDC_survivaldata %>%
+    group_by(ethnicity) %>%
+    summarise(Count = n(), .groups = "drop"),
+  
+  ajcc_pathologic_stage = IDC_survivaldata %>%
+    group_by(ajcc_pathologic_stage) %>%
+    summarise(Count = n(), .groups = "drop")
+)
+
+# Print summaries for each variable
+print(summary_counts$race)
+print(summary_counts$ethnicity)
+print(summary_counts$ajcc_pathologic_stage)
+
+
+# Save each summary as a CSV file
+write.csv(summary_counts$race, "race_summary.csv", row.names = FALSE)
+write.csv(summary_counts$ethnicity, "ethnicity_summary.csv", row.names = FALSE)
+write.csv(summary_counts$ajcc_pathologic_stage, "pathologic_stage_summary.csv", row.names = FALSE)
+
+# Print message to confirm saving
+cat("Summaries saved as CSV files: race_summary.csv, ethnicity_summary.csv, and pathologic_stage_summary.csv\n")
+
+```
+
+
+
+```{r}
+library(dplyr)
+
+# Define age groups
+age_groups <- c("1: <18", "2: 18-30", "3: 30-50", "4: 50-70", "5: 70-80", "6: >80")
+
+# Group `age_at_diagnosis` into levels and count total individuals
+age_group_counts <- IDC_survivaldata %>%
+  mutate(
+    Age_Group = case_when(
+      age_at_diagnosis < 18 ~ "1: <18",
+      age_at_diagnosis >= 18 & age_at_diagnosis < 30 ~ "2: 18-30",
+      age_at_diagnosis >= 30 & age_at_diagnosis < 50 ~ "3: 30-50",
+      age_at_diagnosis >= 50 & age_at_diagnosis < 70 ~ "4: 50-70",
+      age_at_diagnosis >= 70 & age_at_diagnosis < 80 ~ "5: 70-80",
+      age_at_diagnosis > 80 ~ "6: >80",
+      TRUE ~ "Unknown"
+    )
+  ) %>%
+  group_by(Age_Group) %>%
+  summarise(Count = n(), .groups = "drop")  # Count total rows per age group
+
+# View the result
+print(age_group_counts)
+
+# Save the result to a CSV file
+write.csv(age_group_counts, "age_group_summary.csv", row.names = FALSE)
+
+# Confirmation message
+cat("Age group summary saved as age_group_summary.csv\n")
+
+```
+
+
+
+
+```{r}
+#Filtering for MAGEA genes to plot MAGEAgenes expression per subtype
+library(dplyr)
+
+# Assuming your data frame is named `data`
+MAGEA_genes <- Survdata %>%
+  filter(str_detect(GeneSymbol, "^MAGEA"))  # Select rows where GeneSymbol starts with "MAGEA"
+
+# View the filtered data
+head(MAGEA_genes)
+
+# Step 2: Plot MAGEA gene expression per phenotype
+ggplot(MAGEA_genes, aes(x = Phenotype, y = counts, fill = GeneSymbol)) +
+  geom_boxplot(outlier.color = "red", outlier.shape = 16) +  # Boxplot for better visualization
+  labs(
+    title = "MAGEA Gene Expression per Phenotype",
+    x = "Phenotype",
+    y = "Expression (Counts)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  scale_fill_brewer(palette = "Set1")  # Optional: Choose a color palette
+
+```
+
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+# Custom color palette for the unique genes
+gene_colors <- c(
+  "MAGEA9B" = "violet",
+  "MAGEA5" = "gold",
+  "MAGEA2" = "purple",
+  "MAGEA6" = "green",
+  "MAGEA11" = "orange",
+  "MAGEA1" = "pink",
+  "MAGEA2B" = "yellow",
+  "MAGEA8-AS1" = "brown",
+  "MAGEA3" = "cyan",
+  "MAGEA10" = "grey",
+  "MAGEA8" = "darkblue",
+  "MAGEA7P" = "darkgreen",
+  "MAGEA9" = "darkred",
+  "MAGEA4" = "blue",
+  "MAGEA12" = "red"
+)
+
+# Ensure MAGEA_genes data exists and is filtered correctly
+# Assuming `MAGEA_genes` is already filtered to include only MAGEA genes
+
+# Create the plot
+ggplot(MAGEA_genes, aes(x = Phenotype, y = counts)) +
+  geom_boxplot(aes(fill = Phenotype), outlier.shape = NA, alpha = 0.5) +  # Boxplot with transparent fill
+  geom_jitter(aes(color = GeneSymbol), width = 0.2, size = 2) +  # Add jittered points
+  scale_color_manual(values = gene_colors) +  # Apply the custom color palette
+  labs(
+    title = "MAGEA Gene Expression per Phenotype",
+    x = "Phenotype",
+    y = "Expression (Counts)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate x-axis text for readability
+  )
+
+
+
+```
+
+
+
+
+
